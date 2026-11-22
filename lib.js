@@ -686,9 +686,9 @@ function descriptionOf(index, line) {
 }
 
 // A description split into its text and its examples:
-//   // Example: 22.857 rounded to 1 places
+//   // Example: 22.857 rounded to 1 place
 //   //          → 22.9
-// gives { text, examples: [{ input: '22.857 rounded to 1 places', result: '22.9' }] }.
+// gives { text, examples: [{ input: '22.857 rounded to 1 place', result: '22.9' }] }.
 // "(not checked)" is a note for the tests and is left out.
 function splitDescription(description) {
   const lines = description.split('\n');
