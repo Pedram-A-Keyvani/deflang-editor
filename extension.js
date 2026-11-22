@@ -160,6 +160,7 @@ function activate(context) {
   setTimeout(() => watchFlags(context), 0);
   setTimeout(() => watchErrors(context), 0);
   registerCommands(context);
+  serveBodies(context);
   setTimeout(() => checkForUpdates(context, false), 5000);
   log = vscode.window.createOutputChannel('def-lang');
   context.subscriptions.push(log);
@@ -236,7 +237,7 @@ function activate(context) {
       if (flag) return new vscode.Hover(new vscode.MarkdownString(lib.FLAG_HELP[flag.flag]),
         new vscode.Range(position.line, flag.start, position.line, flag.end));
       const found = await lookup(document, position);
-      if (!found) return undefined;
+      if (!found) return document.languageId === 'def-lang' ? embeddedHover(document, position) : undefined;
       const text = new vscode.MarkdownString();
       if (found.html) {
         // a def (a script, a view, a language, a {name} that is a def) is shown with its
@@ -319,12 +320,17 @@ function activate(context) {
     import: vscode.CompletionItemKind.File, python: vscode.CompletionItemKind.Method,
   };
   context.subscriptions.push(vscode.languages.registerCompletionItemProvider(selector, {
-    provideCompletionItems: logged('completions', async (document, position) => {
+    provideCompletionItems: logged('completions', async (document, position, token, completion) => {
       const all = await indexes(document);
       const current = all.find(i => i.file === document.uri.fsPath);
       if (!current) return [];
       const languages = new Set(['python', ...all.flatMap(i => i.languageLines.map(l => l.name))]);
-      return lib.completionsAt(current, position.line, position.character, all, languages).map(found => {
+      const language = lib.bodyLanguageAt(current, position.line);
+      // in def-lang, the extra trigger characters (for HTML and CSS) open nothing
+      if (!language && completion.triggerCharacter && completion.triggerCharacter !== '.') return [];
+      const theirs = language ? await embeddedCompletions(document, position, language, completion.triggerCharacter) : [];
+      if (language && language !== 'python') return theirs;
+      return theirs.concat(lib.completionsAt(current, position.line, position.character, all, languages).map(found => {
         const made = new vscode.CompletionItem(found.label, KINDS[found.kind]);
         made.insertText = new vscode.SnippetString(found.insert);
         made.filterText = found.filter;
@@ -333,9 +339,9 @@ function activate(context) {
         if (found.detail) made.detail = found.detail;
         if (found.documentation) made.documentation = new vscode.MarkdownString(found.documentation);
         return made;
-      });
+      }));
     }),
-  }, '.'));
+  }, '.', '<', ':', '"', '/'));
 
   // Format Document (Shift+Alt+F, or on save with editor.formatOnSave): layout only
   // (lib.formatText), and each body in another language by VS Code's formatter for that
@@ -806,17 +812,85 @@ async function checkForUpdates(context, asked) {
 
 // def-lang's language names -> VS Code's language ids (the same as the colouring grammar's)
 const LANGUAGE_IDS = { js: 'javascript', shell: 'shellscript', bash: 'shellscript' };
+// ... and the file extension that gives a body document its language
+const EXTENSIONS = { html: 'html', css: 'css', javascript: 'js', js: 'js', json: 'json', python: 'py', sql: 'sql',
+  markdown: 'md', yaml: 'yaml', shell: 'sh', bash: 'sh' };
+
+// Bodies being formatted, served read-only at def-lang-body:/N.EXT: a document there is
+// never an editor tab, can't be saved, and VS Code drops it when it's done.
+const BODY_SCHEME = 'def-lang-body';
+const bodies = new Map();
+let bodyCount = 0;
+
+function serveBodies(context) {
+  context.subscriptions.push(vscode.workspace.registerTextDocumentContentProvider(BODY_SCHEME, {
+    provideTextDocumentContent: uri => bodies.get(uri.path) || '',
+  }));
+}
 
 // The body's text formatted by the formatter VS Code has for its language, from column 0;
-// null when there is none, or it changed nothing. The document is in memory only.
+// null when there is none, or it changed nothing.
 async function formatBody(language, text, indent) {
-  const document = await vscode.workspace.openTextDocument({ language: LANGUAGE_IDS[language] || language, content: text });
-  const edits = await vscode.commands.executeCommand('vscode.executeFormatDocumentProvider', document.uri, { tabSize: indent, insertSpaces: true });
-  if (!edits || !edits.length) return null;
-  // apply the edits, last first, so the earlier offsets stay right
-  let result = text;
-  for (const edit of [...edits].sort((a, b) => document.offsetAt(b.range.start) - document.offsetAt(a.range.start))) {
-    result = result.slice(0, document.offsetAt(edit.range.start)) + edit.newText + result.slice(document.offsetAt(edit.range.end));
+  const id = LANGUAGE_IDS[language] || language;
+  const path = `/${++bodyCount}.${EXTENSIONS[language] || 'txt'}`;
+  bodies.set(path, text);
+  try {
+    let document = await vscode.workspace.openTextDocument(vscode.Uri.from({ scheme: BODY_SCHEME, path }));
+    if (document.languageId !== id) document = await vscode.languages.setTextDocumentLanguage(document, id);
+    const edits = await vscode.commands.executeCommand('vscode.executeFormatDocumentProvider', document.uri, { tabSize: indent, insertSpaces: true });
+    if (!edits || !edits.length) return null;
+    // apply the edits, last first, so the earlier offsets stay right
+    let result = text;
+    for (const edit of [...edits].sort((a, b) => document.offsetAt(b.range.start) - document.offsetAt(a.range.start))) {
+      result = result.slice(0, document.offsetAt(edit.range.start)) + edit.newText + result.slice(document.offsetAt(edit.range.end));
+    }
+    return result;
+  } finally {
+    bodies.delete(path);
   }
-  return result;
+}
+
+// ---- hover and IntelliSense inside a body in another language: VS Code's own, for that
+// language. The body is served as a document at def-lang-body: (never shown, read-only):
+// the whole file with everything outside the body as spaces, so every position is the
+// same, and that language's providers are asked there.
+
+async function embeddedDocument(document, position, language) {
+  const lines = document.getText().split(/\r?\n/);
+  const inBody = n => n >= 0 && n < lines.length && (/^\s/.test(lines[n]) || !lines[n].trim());
+  let start = position.line, end = position.line;
+  while (inBody(start - 1) && !/^\S/.test(lines[start - 1])) start--;
+  while (inBody(end + 1)) end++;
+  const content = lines.map((line, n) => (n >= start && n <= end ? line : ' '.repeat(line.length))).join('\n');
+  const path = `/${++bodyCount}.${EXTENSIONS[language] || 'txt'}`;
+  bodies.set(path, content);
+  const id = LANGUAGE_IDS[language] || language;
+  let embedded = await vscode.workspace.openTextDocument(vscode.Uri.from({ scheme: BODY_SCHEME, path }));
+  if (embedded.languageId !== id) embedded = await vscode.languages.setTextDocumentLanguage(embedded, id);
+  return { embedded, done: () => bodies.delete(path) };
+}
+
+async function embeddedHover(document, position) {
+  const all = await indexes(document);
+  const current = all.find(i => i.file === document.uri.fsPath);
+  const language = current && lib.bodyLanguageAt(current, position.line);
+  if (!language) return undefined;
+  const { embedded, done } = await embeddedDocument(document, position, language);
+  try {
+    const hovers = await vscode.commands.executeCommand('vscode.executeHoverProvider', embedded.uri, position);
+    if (!hovers || !hovers.length) return undefined;
+    return new vscode.Hover(hovers.flatMap(hover => hover.contents), hovers.find(hover => hover.range)?.range);
+  } finally {
+    done();
+  }
+}
+
+async function embeddedCompletions(document, position, language, trigger) {
+  const { embedded, done } = await embeddedDocument(document, position, language);
+  try {
+    const list = await vscode.commands.executeCommand('vscode.executeCompletionItemProvider', embedded.uri, position, trigger);
+    return list ? list.items : [];
+  } finally {
+    done();
+  }
 }

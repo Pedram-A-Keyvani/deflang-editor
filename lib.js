@@ -936,6 +936,15 @@ function bodyOwner(index, line) {
   return index.defs.find(d => d.line === n && !d.alias) || null;
 }
 
+// The language of the body that line `n` is in, when it is another language than
+// def-lang (html, css, javascript, python, ...); else null.
+function bodyLanguageAt(index, n) {
+  if (!index.pythonLines.has(n)) return null;
+  const owner = bodyOwner(index, n);
+  if (!owner) return null;
+  return owner.language === true ? 'python' : owner.language || null;
+}
+
 // What to suggest at `column` of line `n`: [{ label, kind, insert, filter, detail, documentation, sort }].
 // kind: statement | phrase | follow | variable | flag | language | import | python.
 function completionsAt(index, n, column, indexes, languages = new Set(['python'])) {
@@ -1145,6 +1154,6 @@ module.exports = {
   FLAG_HELP, flagAt, flagWarnings, wrapsOnLine,
   indexText, findDefinitions, findVariable, findLinks, sourceOf, headerOf, descriptionOf, splitDescription, readableToRegex,
   packageFolder, programFolder, libraryFolder, linkedFolders, listedLibraries, globalFolder, resolveImport, visibleIndexes, templateExpressionAt, wordAt, phrasesIn, defOrder, orderStarts, structureAt,
-  completionsAt, defSnippet, patternParts, importNames, formatText, formatTextWith,
+  completionsAt, defSnippet, patternParts, importNames, formatText, formatTextWith, bodyLanguageAt,
   variableNames, variablesIn, languageNames, findLanguage, isComment, apiRoutes, viewPaths, htmlReferenceAt, resolveHtmlReference,
 };

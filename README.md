@@ -88,6 +88,10 @@ reads your shell's `def-lang` alias. After changing the alias, reload the window
   local folders, and global ones.
 - **In HTML bodies**, `def="name"`, `{name}`, `api="…"` and `href="/…"` lead to the
   def, value, api line or view they name.
+- **Inside a body in another language**, hover and IntelliSense are that language's,
+  as in a `.html`, `.css` or `.js` file: tag and property help, completions, and so
+  on. Python's need a Python extension; in a Python body, def-lang's own helpers
+  (`self.`, `as_text`, …) are offered too.
 
 ## Settings
 
