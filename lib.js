@@ -504,7 +504,9 @@ function libraryFolder(owner, name) {
   if (entry.global) found = path.join(globalFolder(), name, entry.global);
   else if (isGit(entry.from)) return null; // not installed yet
   else found = path.resolve(owner, entry.from);
-  return fs.existsSync(path.join(found, 'library.toml')) ? found : null;
+  if (!fs.existsSync(path.join(found, 'library.toml'))) return null;
+  // the real folder, not a link to it: Ctrl+click opens the file itself
+  try { return fs.realpathSync(found); } catch { return found; }
 }
 
 const isGit = source => source.includes('://') || source.split('#')[0].endsWith('.git');

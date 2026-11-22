@@ -12,6 +12,26 @@ const SAMPLE = path.resolve(process.env.DEFLANG_SAMPLE || path.join(__dirname, '
 for (const [name, folder] of [['DEFLANG_LIB', LIB], ['DEFLANG_SAMPLE', SAMPLE]]) {
   if (!fs.existsSync(folder)) { console.log(`no ${folder}: put it next to this repo, or set ${name}`); process.exit(2); }
 }
+// the samples install their libraries globally: unless $DEFLANG_GLOBAL says where, a
+// global folder of links to LIB's libraries stands in, so the checks run on LIB
+if (!process.env.DEFLANG_GLOBAL) {
+  const os = require('os');
+  const global = fs.mkdtempSync(path.join(os.tmpdir(), 'deflang-global-'));
+  (function find(dir) {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isDirectory() && !entry.name.startsWith('.')) find(path.join(dir, entry.name));
+      else if (entry.name === 'library.toml') {
+        const text = fs.readFileSync(path.join(dir, entry.name), 'utf8');
+        const name = /^name\s*=\s*"([^"]+)"/m.exec(text), version = /^version\s*=\s*"([^"]+)"/m.exec(text);
+        if (!name || !version) continue;
+        fs.mkdirSync(path.join(global, name[1]), { recursive: true });
+        fs.symlinkSync(dir, path.join(global, name[1], version[1]), 'dir');
+      }
+    }
+  })(LIB);
+  process.env.DEFLANG_GLOBAL = global;
+  process.on('exit', () => fs.rmSync(global, { recursive: true, force: true }));
+}
 const files = [];
 function walk(dir) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
