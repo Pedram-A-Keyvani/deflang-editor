@@ -156,12 +156,15 @@ function where(file, line) {
   return `[${name}:${line + 1}](${target})`;
 }
 
+let extensionContext; // for what runs outside activate (installing, updating)
+
 function activate(context) {
   setTimeout(() => watchFlags(context), 0);
   setTimeout(() => watchErrors(context), 0);
   registerCommands(context);
   serveBodies(context);
-  setTimeout(() => checkForUpdates(context, false), 5000);
+  extensionContext = context;
+  setTimeout(() => startChecks(context), 5000);
   setTimeout(() => setUp(context), 2000);
   log = vscode.window.createOutputChannel('def-lang');
   context.subscriptions.push(log);
@@ -619,6 +622,8 @@ async function installInterpreter() {
     }
   }
   const target = pathNode.join(folder, 'deflang');
+  // one that is there already, installed by the extension: updated like at every start
+  if (present && installedInterpreter(extensionContext) === target) return updateInterpreter(extensionContext, false);
   try {
     await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: present ? 'Updating def-lang' : 'Installing def-lang' }, async () => {
       fsNode.mkdirSync(folder, { recursive: true });
@@ -627,8 +632,11 @@ async function installInterpreter() {
       } else if (!present && hasGit()) {
         await runQuietly('git', ['clone', '--quiet', DEFLANG_REPO, target]);
       } else {
+        const commit = await latestCommit().catch(() => null);
         await runQuietly(python, ['-c', UNZIP, target, DEFLANG_ZIP]);
+        if (commit) extensionContext.globalState.update('def-lang.installedCommit', commit);
       }
+      if (!present) extensionContext.globalState.update('def-lang.installedInterpreter', target);
       const env = { ...process.env, PYTHONPATH: [folder, process.env.PYTHONPATH].filter(Boolean).join(process.platform === 'win32' ? ';' : ':') };
       await runQuietly(python, ['-c', 'import deflang.execute'], { env });
     });
@@ -809,13 +817,21 @@ function isNewer(a, b) {
   return false;
 }
 
+// At start: the interpreter and the extension are checked once a day, and at once after
+// the extension was installed or updated (a version that hasn't run here before).
+async function startChecks(context) {
+  const mine = context.extension.packageJSON.version;
+  const newHere = context.globalState.get('def-lang.lastVersion') !== mine;
+  context.globalState.update('def-lang.lastVersion', mine);
+  if (!vscode.workspace.getConfiguration('def-lang').get('checkForUpdates', true)) return;
+  if (!newHere && Date.now() - context.globalState.get('def-lang.lastUpdateCheck', 0) < DAY) return;
+  context.globalState.update('def-lang.lastUpdateCheck', Date.now());
+  await updateInterpreter(context, true);
+  await checkForUpdates(context, false);
+}
+
 async function checkForUpdates(context, asked) {
   const settings = vscode.workspace.getConfiguration('def-lang');
-  if (!asked) {
-    if (!settings.get('checkForUpdates', true)) return;
-    const last = context.globalState.get('def-lang.lastUpdateCheck', 0);
-    if (Date.now() - last < DAY) return;
-  }
   context.globalState.update('def-lang.lastUpdateCheck', Date.now());
   const mine = context.extension.packageJSON.version;
   let release;
@@ -935,5 +951,60 @@ async function embeddedCompletions(document, position, language, trigger) {
     return list ? list.items : [];
   } finally {
     done();
+  }
+}
+
+// ---- keeping the interpreter the extension installed up to date (never one you set up
+// yourself, like a working copy of deflang)
+
+const COMMITS = 'https://api.github.com/repos/Pedram-A-Keyvani/deflang/commits/main';
+
+async function latestCommit() {
+  return JSON.parse((await download(COMMITS)).toString('utf8')).sha.slice(0, 7);
+}
+
+// The deflang folder the extension installed: as it remembers it, or ~/.def-lang/deflang
+// (where earlier versions installed it, before they remembered); null if none.
+function installedInterpreter(context) {
+  const remembered = context.globalState.get('def-lang.installedInterpreter');
+  const earlier = pathNode.join(require('os').homedir(), '.def-lang', 'deflang');
+  const target = remembered || earlier;
+  return fsNode.existsSync(pathNode.join(target, '__main__.py')) ? target : null;
+}
+
+// Brings the extension's interpreter up to date: a git clone fast-forwards to GitHub's, a
+// zip install is downloaded again when GitHub has a newer commit. Only the one in use.
+async function updateInterpreter(context, quiet) {
+  const target = installedInterpreter(context);
+  const folder = deflangFolder();
+  if (!target || !folder || pathNode.resolve(folder) !== pathNode.dirname(target)) {
+    if (!quiet) vscode.window.showInformationMessage('The interpreter in use was set up by you, not installed by the extension: update it yourself (git pull).');
+    return;
+  }
+  const say = text => vscode.window.showInformationMessage(text);
+  try {
+    if (fsNode.existsSync(pathNode.join(target, '.git')) && hasGit()) {
+      const git = (...args) => runQuietly('git', ['-C', target, ...args]).then(out => out.trim());
+      await git('fetch', '--quiet');
+      const [head, upstream] = [await git('rev-parse', '--short', 'HEAD'), await git('rev-parse', '--short', '@{u}')];
+      if (head === upstream) return quiet ? undefined : say(`def-lang's interpreter is up to date (${head}).`);
+      if (await git('status', '--porcelain', '--untracked-files=no')) {
+        return vscode.window.showWarningMessage(`def-lang's interpreter in ${target} has changes of its own, so it isn't updated (${head}; GitHub has ${upstream}).`);
+      }
+      await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Updating def-lang' },
+        () => git('merge', '--ff-only', '--quiet', '@{u}'));
+      say(`def-lang's interpreter is updated: ${head} → ${upstream}.`);
+    } else {
+      const latest = await latestCommit();
+      const mine = context.globalState.get('def-lang.installedCommit');
+      if (mine === latest) return quiet ? undefined : say(`def-lang's interpreter is up to date (${latest}).`);
+      await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Updating def-lang' },
+        () => runQuietly(pythonCommand(), ['-c', UNZIP, target, DEFLANG_ZIP]));
+      context.globalState.update('def-lang.installedCommit', latest);
+      say(`def-lang's interpreter is updated${mine ? `: ${mine} → ${latest}` : ` (${latest})`}.`);
+    }
+  } catch (error) {
+    log.appendLine(`interpreter not updated: ${error.message}`);
+    if (!quiet) vscode.window.showWarningMessage(`def-lang's interpreter wasn't updated: ${error.message}`);
   }
 }

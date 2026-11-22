@@ -21,9 +21,17 @@ A newer `.vsix` installs over the old one the same way.
 ## Updates
 
 VS Code updates only extensions from the Marketplace, so def-lang looks for updates
-itself: once a day it asks GitHub for its newest release, and if that is newer, it
-offers to install it (**Update**, **Not now**, **Don't ask again**). Only GitHub sees
-the request. Check now with **def-lang: Check for updates**; turn the daily check off
+itself, once a day, and at once after it is installed or updated:
+
+- **The interpreter it installed** (in `~/.def-lang/deflang`, or the folder you chose)
+  is brought up to GitHub's: a git clone is fast-forwarded, a zip is downloaded again.
+  One that has changes of its own is left as it is. An interpreter you set up
+  yourself (like a working copy of deflang) is never touched.
+- **The extension**: if GitHub has a newer release, it offers to install it
+  (**Update**, **Not now**, **Don't ask again**).
+
+Only GitHub sees the requests. Check now with **def-lang: Check for updates** (the
+extension) or **def-lang: Install or update the interpreter**; turn the daily check off
 with the setting `def-lang.checkForUpdates`.
 
 ## Uninstall
