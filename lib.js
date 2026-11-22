@@ -1,5 +1,5 @@
-// Finding definitions in .def files. No VS Code here, so it can be tested on its own
-// (see check.js). extension.js connects it to Ctrl+click.
+// Reading .def files: definitions, phrases, variables, libraries. No VS Code here;
+// extension.js connects it to the editor.
 'use strict';
 const fs = require('fs');
 const path = require('path');

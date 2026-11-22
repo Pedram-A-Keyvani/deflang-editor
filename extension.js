@@ -390,8 +390,7 @@ function watchErrors(context) {
   const timers = new Map();
   const latest = new Map(); // file -> number of its newest check, so an old answer is dropped
   const run = (target, file, text) => new Promise(resolve => {
-    const separator = process.platform === 'win32' ? ';' : ':';
-    const env = { ...process.env, PYTHONPATH: [context.extensionPath, process.env.PYTHONPATH].filter(Boolean).join(separator) };
+    const env = interpreterEnv();
     const child = childProcess.execFile(pythonCommand(), ['-m', 'deflang', 'check', target, '--json', '--text', file],
       { env, cwd: lib.programFolder(file), timeout: 10000, maxBuffer: 10 * 1024 * 1024 }, (error, stdout) => {
         try { resolve(JSON.parse(stdout)); } catch {
@@ -445,8 +444,8 @@ function watchErrors(context) {
   vscode.workspace.textDocuments.forEach(check);
 }
 
-// ---- running programs and installing libraries, with the interpreter that comes with
-// the extension (its deflang/ folder) and your own Python
+// ---- running programs and installing libraries, with your own def-lang interpreter
+// (the folder that holds deflang: setting def-lang.folder) and your own Python
 
 const childProcess = require('child_process');
 const fsNode = require('fs');
@@ -454,10 +453,53 @@ const pathNode = require('path');
 
 function pythonCommand() {
   const chosen = vscode.workspace.getConfiguration('def-lang').get('python');
-  return chosen || (process.platform === 'win32' ? 'python' : 'python3');
+  return chosen || (fromAlias() || {}).python || (process.platform === 'win32' ? 'python' : 'python3');
 }
 
-// Whether that Python can run def-lang (3.11 or newer); says what to do if not.
+// The `def-lang` alias of your shell, as the def-lang guide sets it up:
+//   alias def-lang='PYTHONPATH=FOLDER python3 -m deflang'
+// gives { folder, python }. The shell is asked once (it reads ~/.bashrc or ~/.zshrc);
+// a change to the alias counts after "Reload Window". null: no alias.
+let aliasFound;
+function fromAlias() {
+  if (aliasFound !== undefined) return aliasFound;
+  aliasFound = null;
+  if (process.platform === 'win32') return null;
+  const shell = process.env.SHELL || '/bin/bash';
+  const asked = childProcess.spawnSync(shell, ['-ic', 'alias def-lang'], { encoding: 'utf8', timeout: 2000 });
+  // bash prints  alias def-lang='...';  zsh prints  def-lang='...'
+  const m = /def-lang=(['"])([\s\S]*?)\1\s*$/m.exec(asked.stdout || '');
+  if (!m) return null;
+  const words = m[2].replace(/'\\''/g, "'");
+  const folder = /PYTHONPATH=(?:"([^"]*)"|'([^']*)'|(\S+))/.exec(words);
+  const python = /(?:^|\s)(\S*python[\d.]*)\s+-m\s+deflang\b/.exec(words);
+  aliasFound = { folder: folder ? expandPath(folder[1] ?? folder[2] ?? folder[3]) : '', python: python ? python[1] : '' };
+  log.appendLine(`the def-lang alias: folder ${aliasFound.folder || '(none)'}, python ${aliasFound.python || '(none)'}`);
+  return aliasFound;
+}
+
+// ~, $HOME, ${HOME} and other $VARIABLES in a path, the way the shell would read them.
+function expandPath(text) {
+  const home = require('os').homedir();
+  return text.replace(/^~(?=$|[\/])/, home)
+    .replace(/\$\{(\w+)\}|\$(\w+)/g, (all, a, b) => (a || b) === 'HOME' ? home : (process.env[a || b] ?? all));
+}
+
+// The folder that holds deflang: the def-lang.folder setting, else the folder of the
+// `def-lang` alias; empty: deflang is installed (pip, pipx).
+function deflangFolder() {
+  const chosen = vscode.workspace.getConfiguration('def-lang').get('folder') || '';
+  if (chosen) return expandPath(chosen);
+  return (fromAlias() || {}).folder || '';
+}
+
+// The environment that runs `python -m deflang`: that folder on PYTHONPATH.
+function interpreterEnv() {
+  const separator = process.platform === 'win32' ? ';' : ':';
+  return { ...process.env, PYTHONPATH: [deflangFolder(), process.env.PYTHONPATH].filter(Boolean).join(separator) };
+}
+
+// Whether that Python can run def-lang (3.11 or newer, and deflang found); says what to do if not.
 function pythonIsReady() {
   const python = pythonCommand();
   const found = childProcess.spawnSync(python, ['-c', 'import sys; print(sys.version_info >= (3, 11))'], { encoding: 'utf8' });
@@ -469,17 +511,133 @@ function pythonIsReady() {
     vscode.window.showErrorMessage(`def-lang needs Python 3.11 or newer; "${python}" is older. Set "def-lang.python" to a newer one.`);
     return false;
   }
+  const deflang = childProcess.spawnSync(python, ['-c', 'import deflang'], { encoding: 'utf8', env: interpreterEnv() });
+  if (deflang.status !== 0) {
+    const folder = deflangFolder();
+    const install = 'Install', choose = 'I have it: choose its folder…', setting = 'Open setting';
+    vscode.window.showErrorMessage(folder
+      ? `The def-lang interpreter isn't in ${folder}.`
+      : 'The def-lang interpreter isn\'t installed.', install, choose, setting).then(choice => {
+      if (choice === install) vscode.commands.executeCommand('def-lang.installInterpreter');
+      else if (choice === choose) chooseInterpreterFolder();
+      else if (choice === setting) vscode.commands.executeCommand('workbench.action.openSettings', 'def-lang.folder');
+    });
+    return false;
+  }
   return true;
+}
+
+// ---- installing the interpreter: git clone (or GitHub's zip, without git), then
+// def-lang.folder, and if you want the `def-lang` alias in your shell's startup file
+
+const DEFLANG_REPO = 'https://github.com/Pedram-A-Keyvani/deflang.git';
+const DEFLANG_ZIP = 'https://github.com/Pedram-A-Keyvani/deflang/archive/refs/heads/main.zip';
+
+// Python that puts GitHub's zip of deflang at sys.argv[1] (FOLDER/deflang), replacing what is there.
+const UNZIP = [
+  'import io, shutil, sys, urllib.request, zipfile, pathlib',
+  'target = pathlib.Path(sys.argv[1])',
+  'data = urllib.request.urlopen(sys.argv[2], timeout=60).read()',
+  'new = target.with_name(target.name + ".new")',
+  'shutil.rmtree(new, ignore_errors=True)',
+  'zipfile.ZipFile(io.BytesIO(data)).extractall(new)',
+  'inner = next(new.iterdir())',
+  'shutil.rmtree(target, ignore_errors=True)',
+  'inner.rename(target)',
+  'shutil.rmtree(new)',
+].join('\n');
+
+function runQuietly(command, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    childProcess.execFile(command, args, { timeout: 120000, ...options }, (error, stdout, stderr) =>
+      error ? reject(new Error((stderr || error.message).trim().split('\n').pop())) : resolve(stdout));
+  });
+}
+
+const hasGit = () => !childProcess.spawnSync('git', ['--version']).error;
+
+// `I have it`: the user picks their deflang folder; def-lang.folder becomes the folder that holds it.
+async function chooseInterpreterFolder() {
+  const picked = await vscode.window.showOpenDialog({ canSelectFolders: true, canSelectFiles: false, openLabel: 'This is the deflang folder' });
+  if (!picked || !picked.length) return;
+  const deflang = picked[0].fsPath;
+  if (!fsNode.existsSync(pathNode.join(deflang, '__main__.py')) || pathNode.basename(deflang) !== 'deflang') {
+    return vscode.window.showErrorMessage(`${deflang} isn't the def-lang interpreter: pick the folder named deflang (with __main__.py in it).`);
+  }
+  await vscode.workspace.getConfiguration('def-lang').update('folder', pathNode.dirname(deflang), vscode.ConfigurationTarget.Global);
+  vscode.window.showInformationMessage(`def-lang runs the interpreter in ${deflang}.`);
+}
+
+async function installInterpreter() {
+  // Python first: def-lang needs 3.11 or newer, and the zip download needs it too
+  const python = pythonCommand();
+  const version = childProcess.spawnSync(python, ['-c', 'import sys; print(sys.version_info >= (3, 11))'], { encoding: 'utf8' });
+  if (version.error || version.stdout.trim() !== 'True') {
+    return vscode.window.showErrorMessage(`def-lang needs Python 3.11 or newer, and "${python}" isn't. Install it from python.org, or set "def-lang.python".`);
+  }
+  const home = require('os').homedir();
+  let folder = deflangFolder();
+  const present = folder && fsNode.existsSync(pathNode.join(folder, 'deflang', '__main__.py'));
+  if (!present) {
+    const where = await vscode.window.showQuickPick([
+      { label: '~/.def-lang', description: 'next to the global libraries (recommended)', folder: pathNode.join(home, '.def-lang') },
+      { label: 'Choose a folder…', folder: null },
+    ], { placeHolder: 'Install the def-lang interpreter in FOLDER/deflang' });
+    if (!where) return;
+    folder = where.folder;
+    if (!folder) {
+      const picked = await vscode.window.showOpenDialog({ canSelectFolders: true, canSelectFiles: false, openLabel: 'Install deflang in here' });
+      if (!picked || !picked.length) return;
+      folder = picked[0].fsPath;
+    }
+  }
+  const target = pathNode.join(folder, 'deflang');
+  try {
+    await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: present ? 'Updating def-lang' : 'Installing def-lang' }, async () => {
+      fsNode.mkdirSync(folder, { recursive: true });
+      if (present && fsNode.existsSync(pathNode.join(target, '.git')) && hasGit()) {
+        await runQuietly('git', ['-C', target, 'pull', '--ff-only', '--quiet']);
+      } else if (!present && hasGit()) {
+        await runQuietly('git', ['clone', '--quiet', DEFLANG_REPO, target]);
+      } else {
+        await runQuietly(python, ['-c', UNZIP, target, DEFLANG_ZIP]);
+      }
+      const env = { ...process.env, PYTHONPATH: [folder, process.env.PYTHONPATH].filter(Boolean).join(process.platform === 'win32' ? ';' : ':') };
+      await runQuietly(python, ['-c', 'import deflang.execute'], { env });
+    });
+  } catch (error) {
+    return vscode.window.showErrorMessage(`def-lang wasn't ${present ? 'updated' : 'installed'}: ${error.message}`);
+  }
+  await vscode.workspace.getConfiguration('def-lang').update('folder', folder.startsWith(home + pathNode.sep) ? '~' + folder.slice(home.length) : folder, vscode.ConfigurationTarget.Global);
+  aliasFound = undefined;
+  vscode.window.showInformationMessage(`def-lang is ${present ? 'updated' : 'installed'} in ${target}.`);
+  if (!present) offerAlias(folder, python);
+}
+
+// Asks, then adds `alias def-lang='PYTHONPATH=FOLDER python3 -m deflang'` to the shell's
+// startup file, so `def-lang` works in the terminal too. Never without a yes; never twice.
+async function offerAlias(folder, python) {
+  if (process.platform === 'win32') return;
+  const home = require('os').homedir();
+  const rc = pathNode.join(home, (process.env.SHELL || '').endsWith('zsh') ? '.zshrc' : '.bashrc');
+  let text = '';
+  try { text = fsNode.readFileSync(rc, 'utf8'); } catch {}
+  if (/^\s*alias\s+def-lang=/m.test(text)) return;
+  const shown = '~' + rc.slice(home.length);
+  const yes = `Add it to ${shown}`;
+  const choice = await vscode.window.showInformationMessage(`Also add the def-lang command to your terminal? It adds one line to ${shown}.`, yes, 'No');
+  if (choice !== yes) return;
+  const where = folder.startsWith(home + pathNode.sep) ? '$HOME' + folder.slice(home.length) : folder;
+  fsNode.appendFileSync(rc, `${text.endsWith('\n') || !text ? '' : '\n'}\n# def-lang (added by the def-lang extension for VS Code)\nalias def-lang='PYTHONPATH=${where} ${python} -m deflang'\n`);
+  vscode.window.showInformationMessage(`Added to ${shown}: open a new terminal to use def-lang.`);
 }
 
 const quote = text => '"' + text.replace(/(["\\$`])/g, '\\$1') + '"';
 
-// A terminal with the bundled interpreter on PYTHONPATH; one per name, a new run replaces it.
+// A terminal that runs your def-lang interpreter; one per name, a new run replaces it.
 function terminal(context, name, cwd) {
   for (const old of vscode.window.terminals) if (old.name === name) old.dispose();
-  const separator = process.platform === 'win32' ? ';' : ':';
-  const pythonPath = [context.extensionPath, process.env.PYTHONPATH].filter(Boolean).join(separator);
-  const made = vscode.window.createTerminal({ name, cwd, env: { PYTHONPATH: pythonPath } });
+  const made = vscode.window.createTerminal({ name, cwd, env: { PYTHONPATH: interpreterEnv().PYTHONPATH } });
   made.show();
   return made;
 }
@@ -506,6 +664,7 @@ function registerCommands(context) {
       .sendText(`${pythonCommand()} -m deflang run ${quote(target)}`);
   })));
 
+  context.subscriptions.push(vscode.commands.registerCommand('def-lang.installInterpreter', logged('install interpreter', installInterpreter)));
   context.subscriptions.push(vscode.commands.registerCommand('def-lang.console', logged('console', async () => {
     if (!pythonIsReady()) return;
     terminal(context, 'def-lang console', currentProgram() || undefined).sendText(`${pythonCommand()} -m deflang`);

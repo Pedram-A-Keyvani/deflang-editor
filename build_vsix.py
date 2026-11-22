@@ -1,20 +1,14 @@
-"""Packs this folder into def-lang-<version>.vsix without Node or vsce, with the
-interpreter inside it: the deflang project next to this repo (../deflang), or the
-folder in $DEFLANG. Libraries are not part of it:
-a program installs them (python -m deflang install ...).
+"""Packs this folder into def-lang-<version>.vsix without Node or vsce. The extension
+uses your own def-lang interpreter (setting def-lang.folder), so neither it nor any
+library is inside.
 Install it with:  code --install-extension def-lang-<version>.vsix"""
 import json
-import os
 import zipfile
 from pathlib import Path
 
 HERE = Path(__file__).parent
 FILES = ["package.json", "language-configuration.json", "syntaxes/def.tmLanguage.json", "README.md",
          "extension.js", "lib.js", "palette.json"]
-
-INTERPRETER = Path(os.environ.get("DEFLANG", HERE.parent / "deflang")).resolve()
-if not (INTERPRETER / "execute.py").is_file():
-    raise SystemExit(f"the def-lang interpreter isn't at {INTERPRETER}: put the deflang project next to this repo, or set DEFLANG")
 
 package = json.loads((HERE / "package.json").read_text())
 manifest = f"""<?xml version="1.0" encoding="utf-8"?>
@@ -42,7 +36,6 @@ content_types = """<?xml version="1.0" encoding="utf-8"?>
   <Default Extension=".js" ContentType="application/javascript" />
   <Default Extension=".json" ContentType="application/json" />
   <Default Extension=".md" ContentType="text/markdown" />
-  <Default Extension=".py" ContentType="text/x-python" />
   <Default Extension=".vsixmanifest" ContentType="text/xml" />
 </Types>
 """
@@ -52,17 +45,13 @@ with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as vsix:
     vsix.writestr("[Content_Types].xml", content_types)
     for name in FILES:
         vsix.write(HERE / name, f"extension/{name}")
-    # the interpreter: python -m deflang, with the extension's folder on PYTHONPATH
-    for file in sorted(INTERPRETER.glob("*.py")):
-        vsix.write(file, "extension/deflang/" + file.name)
 
 with zipfile.ZipFile(out) as vsix:
     names = set(vsix.namelist())
-needed = {"extension/deflang/__init__.py", "extension/deflang/__main__.py", "extension/deflang/libraries.py",
-          "extension/deflang/execute.py", "extension/deflang/tree.py", "extension/extension.js", "extension/lib.js"}
+needed = {"extension/extension.js", "extension/lib.js", "extension/package.json"}
 missing = needed - names
 if missing:
     raise SystemExit(f"the package is missing {sorted(missing)}")
-if any(name.endswith(".def") for name in names):
-    raise SystemExit("the package has .def files: libraries are installed separately")
+if any(name.endswith((".def", ".py")) for name in names):
+    raise SystemExit("the package has .def or .py files: the interpreter and the libraries are not part of it")
 print("wrote", out)

@@ -2,7 +2,7 @@
   "name": "def-lang",
   "displayName": "def-lang",
   "description": "The def-lang language: run .def programs, install libraries, and colours, Ctrl+click and hover for phrases, variables and imports",
-  "version": "0.28.1",
+  "version": "0.29.0",
   "publisher": "def-lang",
   "license": "MIT",
   "engines": {
@@ -17,7 +17,8 @@
     "onLanguage:html",
     "onCommand:def-lang.run",
     "onCommand:def-lang.console",
-    "onCommand:def-lang.installLibrary"
+    "onCommand:def-lang.installLibrary",
+    "onCommand:def-lang.installInterpreter"
   ],
   "contributes": {
     "languages": [
@@ -330,7 +331,12 @@
         "def-lang.python": {
           "type": "string",
           "default": "",
-          "description": "The Python (3.11 or newer) that runs def-lang programs. Empty: python3, or python on Windows."
+          "description": "The Python (3.11 or newer) that runs def-lang programs. Empty: the one in your shell's def-lang alias, else python3 (python on Windows)."
+        },
+        "def-lang.folder": {
+          "type": "string",
+          "default": "",
+          "description": "The folder that holds the def-lang interpreter (its deflang folder), like ~/code for ~/code/deflang. Empty: the folder of your shell's def-lang alias (alias def-lang='PYTHONPATH=FOLDER python3 -m deflang'), else an installed deflang (pip, pipx)."
         }
       }
     },
@@ -348,7 +354,12 @@
       },
       {
         "command": "def-lang.installLibrary",
-        "title": "Install library\u2026",
+        "title": "Install library…",
+        "category": "def-lang"
+      },
+      {
+        "command": "def-lang.installInterpreter",
+        "title": "Install or update the interpreter",
         "category": "def-lang"
       }
     ],

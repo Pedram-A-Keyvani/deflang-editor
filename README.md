@@ -1,105 +1,86 @@
 # def-lang for VS Code
 
-The def-lang language for VS Code. It carries the interpreter (no libraries: a
-program installs those) and needs Python 3.11 or newer (setting `def-lang.python`).
+The [def-lang](https://github.com/Pedram-A-Keyvani/deflang) language in VS Code, for
+any folder of `.def` files.
 
-- **def-lang: Run this program** (the ▶ button on a `.def` file): runs it in a
-  terminal. A file of a package runs the package's `main.def`.
-- **def-lang: Open console**: the def-lang console in a terminal.
-- **def-lang: Install library…**: from a git repository (`URL#folder`), into the
-  project or global, or a local library (a folder of the project, linked), into the
-  program of the open file, with the libraries its `libraries.toml` lists.
+## Install
 
-Colours `.def` files: comments (with the file's own marker: `//`, or what `comment is`
-sets from that line on), `def` lines and their flags, arguments (`A0`),
-restricted-argument regexes, text, numbers (also in words), questions, loops,
-library phrases, and Python bodies of `def python ...` as real Python.
+Get `def-lang-VERSION.vsix`, from the repository's
+[Releases](https://github.com/Pedram-A-Keyvani/deflang-editor/releases), or build it
+yourself ([CONTRIBUTING.md](CONTRIBUTING.md)). Then install it:
 
-Ctrl+click (or F12) goes to, and hovering shows:
+```console
+code --install-extension def-lang-VERSION.vsix
+```
 
-- a phrase's `def` or `means` line (`squared`, `is between`, `home page`,
-  `greater than`); the def with the most matching words wins, like in the engine;
-- a variable's first value (`x is ...`, `give x`, `for each x in`, `add ... to x`);
-- the file in `use web/server` (a library's file), `use def/app.api`,
-  `template "pages/index.html"` and
-  `the assets are in "static"`.
+or in VS Code: Extensions view → `…` menu → **Install from VSIX…**. Then reload the
+window: Ctrl+Shift+P, "Developer: Reload Window".
 
-Hover also shows a def's description: the comment lines right above it
-(above the first line of a group of `def` lines, or of a run of `means` lines).
+A newer `.vsix` installs over the old one the same way.
 
-    // A0 multiplied by itself. Example: `3 squared`
-    def A0 squared
-        A0 * A0
+## Uninstall
 
-The same works in a package's HTML templates, inside `{{ ... }}`:
-`{{ visits }}` goes to `visits is 0`, `{{ the time }}` to the `time` def.
-Variables are looked up in the template's own package first.
+```console
+code --uninstall-extension def-lang.def-lang
+```
 
-Colours use the Fjord palette, with a set for dark themes and one for light themes:
-steel blue for def-lang's own words (`def`, `use`, `is`, `?`, symbols), grey for
-flags, near-default text for def phrases (`count the visit`, `say`), gold for
-variables (`A0` and your own, like `visits`), sage for quoted text and lilac for
-numbers. `make_palette.py` checks every colour for contrast (4.5 or more; 3 for
-flags and comments, which are meant to sit back) and writes them into
-`package.json`. Other languages keep the theme's colours. To use your theme's
-colours for def-lang too, set your own `editor.tokenColorCustomizations` (yours
-replace the extension's).
+or in VS Code: Extensions view → def-lang → **Uninstall**.
 
-Hovering underlines the whole use of a def, spaces included: its fixed words with
-a solid steel-blue line, the parts that fill its arguments with gold dashes. Set
-`def-lang.underline.wordColor` or `def-lang.underline.argumentColor` (a theme
-colour id like `charts.blue`, or `#rrggbb`) to use one colour of your own.
+## Before you start
 
-In a view's HTML (`def html ... view`), `{name}` is coloured as a variable, and
-Ctrl+click and hover lead to where it gets its value and to the `api` line that
-sends it. `api="/api/x"` and `loads="/api/x"` lead to that `api` line, and
-`href="/x"` to the view with that path.
+It runs the def-lang interpreter, with Python 3.11 or newer. If the interpreter isn't
+installed, the extension offers to install it:
 
-Languages (`def html ...`, `def python ...`) are read from the `language NAME`
-lines of your files, so a language you declare yourself is understood too:
-Ctrl+click or hover on the word after `def` goes to its `language` line. Bodies
-of Python, HTML, CSS, JavaScript, SQL, Markdown, JSON, shell and YAML are coloured
-in that language; add others to `LANGUAGES` in `make_grammar.py`.
+- **Install**: it gets the interpreter from GitHub into `~/.def-lang/deflang` (or a
+  folder you choose), with git or, without git, as a zip. Then it asks whether to
+  add the `def-lang` command to your terminal (one line in `~/.bashrc` or
+  `~/.zshrc`); it never changes them without a yes.
+- **I have it**: you pick your `deflang` folder.
 
-In HTML, Ctrl+click or hover on the name in any `def="..."` (`<nav def="site nav">`,
-`<template def="bmi view">`, `<script def="web script">`) goes to that def and shows
-its description.
+It also finds an interpreter you set up yourself, as the def-lang guide says: it
+reads your shell's `def-lang` alias. After changing the alias, reload the window.
 
-Hover on a flag after `def` (`as written`, `regex`) says what it means and when a
-def needs it. A Python body that runs or names an argument itself without
-`as written` gets a warning under its def line. The hover underline reads a line
-like the engine does: brackets, sentences, word lists, then def order.
+## Commands
 
-IntelliSense (as you type, or Ctrl+Space) offers the def phrases this file's program
-can see, with their descriptions and Tab between the arguments (`repeat ▮ times : ▯`);
-after something typed, the defs that start with an argument (`x ` → `is`, `>`, `+`);
-variables; statements at the start of a line; flags and languages after `def`;
-files and libraries after `use` (and after `from`); and in a Python body, what `self.` and the
-helpers (`as_text`, `number`, ...) give, and the def's own arguments.
+- **Run this program** (the ▶ button on a `.def` file): runs it in a terminal. A file
+  of a program runs the program's `main.def`.
+- **Open console**: the def-lang console in a terminal.
+- **Install or update the interpreter**: installs it, as above; or updates it
+  (`git pull`, or a new zip).
+- **Install library…**: from a git repository (`URL#folder`), into the project or
+  global, or a local library (a folder of the project). It installs the libraries
+  that library uses too.
 
-Errors are underlined in red as you type, saved or not: unknown names, files it
-can't find, a missing closing quote, a Python syntax error in a body, and more. They
-come from the interpreter itself (`python -m deflang check`), which reads the open
-file as part of its program without running anything.
+## Editing
 
-It looks at every `.def` file in the open folder, and at the libraries a program
-lists: linked, global (`~/.def-lang/libraries`, or what `def-lang setup` chose), or
-copied into `libraries/`.
+- **Colours** for comments, `def` lines and their flags, arguments, text, numbers,
+  variables and the phrases of your defs. Bodies in another language (Python, HTML,
+  CSS, JavaScript, …) are coloured in that language.
+- **Hover and Ctrl+click** (or F12) on a phrase go to its `def` and show its
+  description: the comment lines right above the def. They also work on variables,
+  on the file after `use`, on flags (`as written`, `regex`) and on a language name
+  after `def`.
+- **Underlines** on hover show how a line is read: a def's fixed words solid, the
+  parts that fill its arguments dashed.
+- **IntelliSense** offers the phrases a file's program can see, with Tab between the
+  arguments (`repeat ▮ times : ▯`), and also variables, statements, flags, files after
+  `use`, and in a Python body what `self.` gives.
+- **Errors** are underlined in red as you type: unknown names, files that can't be
+  found, a missing closing quote, a Python syntax error, and more. They come from the
+  interpreter, which reads the program without running it.
+- **Libraries** are found the way the interpreter finds them: copies in `libraries/`,
+  local folders, and global ones.
+- **In HTML bodies**, `def="name"`, `{name}`, `api="…"` and `href="/…"` lead to the
+  def, value, api line or view they name.
 
-## Building
+## Settings
 
-This repository is the extension. It works with three repositories next to it:
+| Setting | Is |
+|---|---|
+| `def-lang.folder` | the folder that holds the interpreter's `deflang` folder, like `~/code`. Empty: the one in your `def-lang` alias, else an installed deflang (pip, pipx) |
+| `def-lang.python` | the Python (3.11 or newer) that runs def-lang. Empty: the one in your `def-lang` alias, else `python3` (`python` on Windows) |
+| `def-lang.underline.wordColor` | colour of the underline under a def's fixed words: a theme colour id (like `charts.blue`) or `#rrggbb` |
+| `def-lang.underline.argumentColor` | colour of the underline under the parts that fill a def's arguments |
 
-    deflang/          the interpreter, packed into the extension
-    deflang-lib/      the libraries, for the checks
-    deflang-sample/   the samples, for the checks
-
-(or `$DEFLANG`, `$DEFLANG_LIB` and `$DEFLANG_SAMPLE`).
-
-    python3 make_grammar.py      # only after changing the grammar
-    ELECTRON_RUN_AS_NODE=1 code check.js   # checks lib.js against the libraries and samples
-    python3 build_vsix.py        # packs ../deflang/ in, and checks it has no libraries
-    code --install-extension def-lang-<version>.vsix
-
-Then reload VS Code (Ctrl+Shift+P, "Developer: Reload Window").
-Uninstall with `code --uninstall-extension def-lang.def-lang`.
+The colours work with light and dark themes. Your own
+`editor.tokenColorCustomizations` replace them.
