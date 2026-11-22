@@ -1038,67 +1038,104 @@ function collapseSpaces(content) {
 // - in a def-lang line, runs of spaces between words become one, outside "text"
 //   (patterns read words split by spaces; def lines keep their spaces: a regex may need them);
 // - a body in another language (Python, HTML, ...) moves as a whole to one level under
-//   its def, keeping its own layout (the engine strips a body's common indentation);
+//   its def, keeping its own layout (the engine strips a body's common indentation),
+//   or formatted by that language's formatter (formatTextWith);
 // - trailing spaces go, empty lines collapse to one, and the file ends with one newline.
 // A line whose width isn't a whole number of levels is left as it is (the engine says why).
 function formatText(text, languages = new Set(['python'])) {
+  return render(formatParts(text, languages), new Map());
+}
+
+// The same, with each body in another language given to formatBody(language, text, indent),
+// which returns its formatted text (from column 0), or null to keep it as it is.
+async function formatTextWith(text, languages, formatBody) {
+  const parts = formatParts(text, languages);
+  const formatted = new Map();
+  for (const [i, part] of parts.entries()) {
+    if (!part.body) continue;
+    try {
+      const done = await formatBody(part.language, bodyText(part), part.indent);
+      if (typeof done === 'string' && done.trim()) formatted.set(i, done);
+    } catch {} // a formatter that fails leaves its body as it was
+  }
+  return render(parts, formatted);
+}
+
+// A file as parts: { line } (already formatted), or { body, language, indent } (a body in
+// another language, its lines as they are).
+function formatParts(text, languages) {
   const lines = text.split(/\r?\n/);
-  const out = [];
+  const parts = [];
   let indent = 4;
   let comment = '//';
-  let body = null; // the lines of a body in another language, until it ends
+  let body = null;
+  let bodyLanguage = null; // after a def or language line: the language of its body, or null (def-lang)
   const lead = line => line.slice(0, line.length - line.trimStart().length);
   const width = line => [...lead(line)].reduce((n, c) => n + (c === '\t' ? indent : 1), 0);
-  const blank = () => { if (out.length && out[out.length - 1] !== '') out.push(''); };
-
-  const endBody = () => {
-    if (!body) return;
-    const filled = body.filter(l => l.trim());
-    const least = Math.min(...filled.map(width));
-    let empties = 0;
-    for (const line of body) {
-      if (!line.trim()) { empties++; continue; }
-      if (empties) { out.push(''); empties = 0; }
-      out.push(' '.repeat(indent + width(line) - least) + line.trim());
-    }
-    if (empties) out.push('');
-    body = null;
-  };
-
-  let defKind = null; // after a def or language line: 'language' (its body is another language) or 'def-lang'
   for (const raw of lines) {
     const line = raw.replace(/\s+$/, '');
     const indented = /^\s/.test(line);
     if (body) {
-      if (!line || indented) { body.push(line); continue; }
-      endBody();
+      if (!line || indented) { body.body.push(line); continue; }
+      parts.push(body);
+      body = null;
     }
-    if (!line) { blank(); continue; }
+    if (!line) { parts.push({ line: '' }); continue; }
     const content = line.trim();
-    if (indented && defKind === 'language') { body = [line]; continue; }
+    if (indented && bodyLanguage) { body = { body: [line], language: bodyLanguage, indent }; continue; }
     if (!indented) {
-      defKind = null;
+      bodyLanguage = null;
       let m;
       if ((m = /^def\s+(.*)$/.exec(content))) {
-        let rest = m[1], language = false, f;
+        let rest = m[1], f;
         for (;;) {
           if ((f = FLAG.exec(rest))) rest = rest.slice(f[0].length);
-          else if ((f = /^(\w+)\s+/.exec(rest)) && languages.has(f[1])) { language = true; rest = rest.slice(f[0].length); }
+          else if (!bodyLanguage && (f = /^(\w+)\s+/.exec(rest)) && languages.has(f[1])) { bodyLanguage = f[1]; rest = rest.slice(f[0].length); }
           else break;
         }
-        defKind = language ? 'language' : 'def-lang';
-        out.push(content);
+        parts.push({ line: content });
         continue;
       }
-      if (LANGUAGE_LINE.test(content)) { defKind = 'language'; out.push(content); continue; }
+      if (LANGUAGE_LINE.test(content)) { bodyLanguage = 'python'; parts.push({ line: content }); continue; }
       if ((m = /^comment\s+is\s+(.+)$/.exec(content))) comment = m[1].trim();
       if ((m = /^indent\s+(\d+)$/.exec(content)) && Number(m[1]) > 0) indent = Number(m[1]);
     }
-    if (width(line) % indent) { out.push(line); continue; } // not a whole level: as it is
+    if (width(line) % indent) { parts.push({ line }); continue; } // not a whole level: as it is
     const shown = content.startsWith(comment) ? content : collapseSpaces(content);
-    out.push(' '.repeat(width(line)) + shown);
+    parts.push({ line: ' '.repeat(width(line)) + shown });
   }
-  endBody();
+  if (body) parts.push(body);
+  return parts;
+}
+
+// A body's own text: its lines without their common indentation (tabs as spaces).
+function bodyText(part) {
+  const expand = line => line.replace(/^\s+/, lead => lead.replace(/\t/g, ' '.repeat(part.indent)));
+  const lines = part.body.map(expand);
+  const filled = lines.filter(l => l.trim());
+  const least = Math.min(...filled.map(l => l.length - l.trimStart().length));
+  return lines.map(l => (l.trim() ? l.slice(least) : '')).join('\n').replace(/\n+$/, '') + '\n';
+}
+
+function render(parts, formatted) {
+  const out = [];
+  for (const [i, part] of parts.entries()) {
+    if (!part.body) {
+      if (part.line === '' && (!out.length || out[out.length - 1] === '')) continue;
+      out.push(part.line);
+      continue;
+    }
+    const text = formatted.has(i) ? formatted.get(i) : bodyText(part);
+    let empty = false;
+    for (const line of text.replace(/\s+$/, '').split('\n')) {
+      if (!line.trim()) { empty = true; continue; }
+      if (empty && out[out.length - 1] !== '') out.push('');
+      empty = false;
+      out.push(' '.repeat(part.indent) + line.replace(/\s+$/, ''));
+    }
+    // the empty lines after a body, before the next line
+    if (part.body.length && !part.body[part.body.length - 1].trim()) out.push('');
+  }
   while (out.length && out[out.length - 1] === '') out.pop();
   while (out.length && out[0] === '') out.shift();
   return out.join('\n') + '\n';
@@ -1108,6 +1145,6 @@ module.exports = {
   FLAG_HELP, flagAt, flagWarnings, wrapsOnLine,
   indexText, findDefinitions, findVariable, findLinks, sourceOf, headerOf, descriptionOf, splitDescription, readableToRegex,
   packageFolder, programFolder, libraryFolder, linkedFolders, listedLibraries, globalFolder, resolveImport, visibleIndexes, templateExpressionAt, wordAt, phrasesIn, defOrder, orderStarts, structureAt,
-  completionsAt, defSnippet, patternParts, importNames, formatText,
+  completionsAt, defSnippet, patternParts, importNames, formatText, formatTextWith,
   variableNames, variablesIn, languageNames, findLanguage, isComment, apiRoutes, viewPaths, htmlReferenceAt, resolveHtmlReference,
 };

@@ -79,8 +79,11 @@ reads your shell's `def-lang` alias. After changing the alias, reload the window
   interpreter, which reads the program without running it.
 - **Format Document** (Shift+Alt+F, or on save with `editor.formatOnSave`): tidies the
   layout, never what a line means. Indentation in spaces, one space between words
-  (quoted text and comments as they are), bodies in another language one level under
-  their def (their own layout kept), no trailing spaces, no runs of empty lines.
+  (quoted text and comments as they are), no trailing spaces, no runs of empty lines.
+  A body in another language goes one level under its def, formatted by VS Code's
+  formatter for that language: HTML, CSS, JavaScript and JSON are built in; Python
+  needs a formatter extension (Black, autopep8, Ruff). Without one, the body keeps
+  its own layout.
 - **Libraries** are found the way the interpreter finds them: copies in `libraries/`,
   local folders, and global ones.
 - **In HTML bodies**, `def="name"`, `{name}`, `api="…"` and `href="/…"` lead to the
@@ -93,6 +96,7 @@ reads your shell's `def-lang` alias. After changing the alias, reload the window
 | `def-lang.folder` | the folder that holds the interpreter's `deflang` folder, like `~/code`. Empty: the one in your `def-lang` alias, else an installed deflang (pip, pipx) |
 | `def-lang.python` | the Python (3.11 or newer) that runs def-lang. Empty: the one in your `def-lang` alias, else `python3` (`python` on Windows) |
 | `def-lang.checkForUpdates` | look for a newer def-lang on GitHub once a day (on by default) |
+| `def-lang.formatBodies` | Format Document formats bodies in other languages too (on by default) |
 | `def-lang.underline.wordColor` | colour of the underline under a def's fixed words: a theme colour id (like `charts.blue`) or `#rrggbb` |
 | `def-lang.underline.argumentColor` | colour of the underline under the parts that fill a def's arguments |
 

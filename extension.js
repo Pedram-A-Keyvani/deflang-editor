@@ -338,13 +338,16 @@ function activate(context) {
   }, '.'));
 
   // Format Document (Shift+Alt+F, or on save with editor.formatOnSave): layout only
-  // (lib.formatText). The languages come from every file, like the colours.
+  // (lib.formatText), and each body in another language by VS Code's formatter for that
+  // language (def-lang.formatBodies). The languages come from every file, like the colours.
   context.subscriptions.push(vscode.languages.registerDocumentFormattingEditProvider(selector, {
     provideDocumentFormattingEdits: logged('format', async document => {
       const all = await indexes(document);
       const languages = new Set(['python', ...all.flatMap(i => i.languageLines.map(l => l.name))]);
       const text = document.getText();
-      const formatted = lib.formatText(text, languages);
+      const formatted = vscode.workspace.getConfiguration('def-lang').get('formatBodies', true)
+        ? await lib.formatTextWith(text, languages, formatBody)
+        : lib.formatText(text, languages);
       if (formatted === text) return [];
       const whole = new vscode.Range(document.positionAt(0), document.positionAt(text.length));
       return [vscode.TextEdit.replace(whole, formatted)];
@@ -797,4 +800,23 @@ async function checkForUpdates(context, asked) {
   } catch (error) {
     vscode.window.showErrorMessage(`def-lang wasn't updated: ${error.message}`);
   }
+}
+
+// ---- formatting a body in another language with VS Code's own formatter for it
+
+// def-lang's language names -> VS Code's language ids (the same as the colouring grammar's)
+const LANGUAGE_IDS = { js: 'javascript', shell: 'shellscript', bash: 'shellscript' };
+
+// The body's text formatted by the formatter VS Code has for its language, from column 0;
+// null when there is none, or it changed nothing. The document is in memory only.
+async function formatBody(language, text, indent) {
+  const document = await vscode.workspace.openTextDocument({ language: LANGUAGE_IDS[language] || language, content: text });
+  const edits = await vscode.commands.executeCommand('vscode.executeFormatDocumentProvider', document.uri, { tabSize: indent, insertSpaces: true });
+  if (!edits || !edits.length) return null;
+  // apply the edits, last first, so the earlier offsets stay right
+  let result = text;
+  for (const edit of [...edits].sort((a, b) => document.offsetAt(b.range.start) - document.offsetAt(a.range.start))) {
+    result = result.slice(0, document.offsetAt(edit.range.start)) + edit.newText + result.slice(document.offsetAt(edit.range.end));
+  }
+  return result;
 }
