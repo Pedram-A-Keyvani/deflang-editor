@@ -1,0 +1,751 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "def-lang",
+  "scopeName": "source.def",
+  "patterns": [
+    {
+      "include": "#language-line"
+    },
+    {
+      "include": "#python-def"
+    },
+    {
+      "include": "#html-def"
+    },
+    {
+      "include": "#css-def"
+    },
+    {
+      "include": "#javascript-def"
+    },
+    {
+      "include": "#js-def"
+    },
+    {
+      "include": "#sql-def"
+    },
+    {
+      "include": "#markdown-def"
+    },
+    {
+      "include": "#json-def"
+    },
+    {
+      "include": "#shell-def"
+    },
+    {
+      "include": "#bash-def"
+    },
+    {
+      "include": "#yaml-def"
+    },
+    {
+      "include": "#def"
+    },
+    {
+      "include": "#statement"
+    },
+    {
+      "include": "#means"
+    },
+    {
+      "include": "#echo"
+    },
+    {
+      "include": "#expression"
+    }
+  ],
+  "repository": {
+    "language-line": {
+      "name": "meta.language.def",
+      "begin": "^(language)\\s+(\\w+)\\s*$",
+      "beginCaptures": {
+        "1": {
+          "name": "storage.type.def.def"
+        },
+        "2": {
+          "name": "storage.modifier.def"
+        }
+      },
+      "end": "^(?=\\S)",
+      "patterns": [
+        {
+          "name": "meta.embedded.block.python",
+          "begin": "^(?=[ \\t])",
+          "end": "^(?=\\S)",
+          "patterns": [
+            {
+              "include": "source.python"
+            }
+          ]
+        }
+      ]
+    },
+    "python-def": {
+      "name": "meta.def.python.def",
+      "begin": "^(def)\\s+(?=(?:(?:as\\s+written|regex|python|html|css|javascript|js|sql|markdown|json|shell|bash|yaml)\\s+)*python\\s)((?:(?:as\\s+written|regex|python|html|css|javascript|js|sql|markdown|json|shell|bash|yaml)\\s+)+)(.*)$",
+      "beginCaptures": {
+        "1": {
+          "name": "storage.type.def.def"
+        },
+        "2": {
+          "patterns": [
+            {
+              "include": "#flags"
+            }
+          ]
+        },
+        "3": {
+          "patterns": [
+            {
+              "include": "#pattern"
+            }
+          ]
+        }
+      },
+      "end": "^(?=\\S)",
+      "patterns": [
+        {
+          "name": "meta.embedded.block.python",
+          "begin": "^(?=[ \\t])",
+          "end": "^(?=\\S)",
+          "patterns": [
+            {
+              "include": "source.python"
+            }
+          ]
+        }
+      ]
+    },
+    "html-def": {
+      "name": "meta.def.html.def",
+      "begin": "^(def)\\s+(?=(?:(?:as\\s+written|regex|python|html|css|javascript|js|sql|markdown|json|shell|bash|yaml)\\s+)*html\\s)((?:(?:as\\s+written|regex|python|html|css|javascript|js|sql|markdown|json|shell|bash|yaml)\\s+)+)(.*)$",
+      "beginCaptures": {
+        "1": {
+          "name": "storage.type.def.def"
+        },
+        "2": {
+          "patterns": [
+            {
+              "include": "#flags"
+            }
+          ]
+        },
+        "3": {
+          "patterns": [
+            {
+              "include": "#pattern"
+            }
+          ]
+        }
+      },
+      "end": "^(?=\\S)",
+      "patterns": [
+        {
+          "name": "meta.embedded.block.html",
+          "begin": "^(?=[ \\t])",
+          "end": "^(?=\\S)",
+          "patterns": [
+            {
+              "name": "meta.tag.view.html",
+              "begin": "(</?)(view)\\b",
+              "beginCaptures": {
+                "1": {
+                  "name": "punctuation.definition.tag.begin.html"
+                },
+                "2": {
+                  "name": "entity.name.tag.html"
+                }
+              },
+              "end": "(/?>)",
+              "endCaptures": {
+                "1": {
+                  "name": "punctuation.definition.tag.end.html"
+                }
+              },
+              "patterns": [
+                {
+                  "include": "text.html.basic#attribute"
+                }
+              ]
+            },
+            {
+              "include": "text.html.basic"
+            }
+          ]
+        }
+      ]
+    },
+    "css-def": {
+      "name": "meta.def.css.def",
+      "begin": "^(def)\\s+(?=(?:(?:as\\s+written|regex|python|html|css|javascript|js|sql|markdown|json|shell|bash|yaml)\\s+)*css\\s)((?:(?:as\\s+written|regex|python|html|css|javascript|js|sql|markdown|json|shell|bash|yaml)\\s+)+)(.*)$",
+      "beginCaptures": {
+        "1": {
+          "name": "storage.type.def.def"
+        },
+        "2": {
+          "patterns": [
+            {
+              "include": "#flags"
+            }
+          ]
+        },
+        "3": {
+          "patterns": [
+            {
+              "include": "#pattern"
+            }
+          ]
+        }
+      },
+      "end": "^(?=\\S)",
+      "patterns": [
+        {
+          "name": "meta.embedded.block.css",
+          "begin": "^(?=[ \\t])",
+          "end": "^(?=\\S)",
+          "patterns": [
+            {
+              "include": "source.css"
+            }
+          ]
+        }
+      ]
+    },
+    "javascript-def": {
+      "name": "meta.def.javascript.def",
+      "begin": "^(def)\\s+(?=(?:(?:as\\s+written|regex|python|html|css|javascript|js|sql|markdown|json|shell|bash|yaml)\\s+)*javascript\\s)((?:(?:as\\s+written|regex|python|html|css|javascript|js|sql|markdown|json|shell|bash|yaml)\\s+)+)(.*)$",
+      "beginCaptures": {
+        "1": {
+          "name": "storage.type.def.def"
+        },
+        "2": {
+          "patterns": [
+            {
+              "include": "#flags"
+            }
+          ]
+        },
+        "3": {
+          "patterns": [
+            {
+              "include": "#pattern"
+            }
+          ]
+        }
+      },
+      "end": "^(?=\\S)",
+      "patterns": [
+        {
+          "name": "meta.embedded.block.javascript",
+          "begin": "^(?=[ \\t])",
+          "end": "^(?=\\S)",
+          "patterns": [
+            {
+              "include": "source.js"
+            }
+          ]
+        }
+      ]
+    },
+    "js-def": {
+      "name": "meta.def.js.def",
+      "begin": "^(def)\\s+(?=(?:(?:as\\s+written|regex|python|html|css|javascript|js|sql|markdown|json|shell|bash|yaml)\\s+)*js\\s)((?:(?:as\\s+written|regex|python|html|css|javascript|js|sql|markdown|json|shell|bash|yaml)\\s+)+)(.*)$",
+      "beginCaptures": {
+        "1": {
+          "name": "storage.type.def.def"
+        },
+        "2": {
+          "patterns": [
+            {
+              "include": "#flags"
+            }
+          ]
+        },
+        "3": {
+          "patterns": [
+            {
+              "include": "#pattern"
+            }
+          ]
+        }
+      },
+      "end": "^(?=\\S)",
+      "patterns": [
+        {
+          "name": "meta.embedded.block.js",
+          "begin": "^(?=[ \\t])",
+          "end": "^(?=\\S)",
+          "patterns": [
+            {
+              "include": "source.js"
+            }
+          ]
+        }
+      ]
+    },
+    "sql-def": {
+      "name": "meta.def.sql.def",
+      "begin": "^(def)\\s+(?=(?:(?:as\\s+written|regex|python|html|css|javascript|js|sql|markdown|json|shell|bash|yaml)\\s+)*sql\\s)((?:(?:as\\s+written|regex|python|html|css|javascript|js|sql|markdown|json|shell|bash|yaml)\\s+)+)(.*)$",
+      "beginCaptures": {
+        "1": {
+          "name": "storage.type.def.def"
+        },
+        "2": {
+          "patterns": [
+            {
+              "include": "#flags"
+            }
+          ]
+        },
+        "3": {
+          "patterns": [
+            {
+              "include": "#pattern"
+            }
+          ]
+        }
+      },
+      "end": "^(?=\\S)",
+      "patterns": [
+        {
+          "name": "meta.embedded.block.sql",
+          "begin": "^(?=[ \\t])",
+          "end": "^(?=\\S)",
+          "patterns": [
+            {
+              "include": "source.sql"
+            }
+          ]
+        }
+      ]
+    },
+    "markdown-def": {
+      "name": "meta.def.markdown.def",
+      "begin": "^(def)\\s+(?=(?:(?:as\\s+written|regex|python|html|css|javascript|js|sql|markdown|json|shell|bash|yaml)\\s+)*markdown\\s)((?:(?:as\\s+written|regex|python|html|css|javascript|js|sql|markdown|json|shell|bash|yaml)\\s+)+)(.*)$",
+      "beginCaptures": {
+        "1": {
+          "name": "storage.type.def.def"
+        },
+        "2": {
+          "patterns": [
+            {
+              "include": "#flags"
+            }
+          ]
+        },
+        "3": {
+          "patterns": [
+            {
+              "include": "#pattern"
+            }
+          ]
+        }
+      },
+      "end": "^(?=\\S)",
+      "patterns": [
+        {
+          "name": "meta.embedded.block.markdown",
+          "begin": "^(?=[ \\t])",
+          "end": "^(?=\\S)",
+          "patterns": [
+            {
+              "include": "text.html.markdown"
+            }
+          ]
+        }
+      ]
+    },
+    "json-def": {
+      "name": "meta.def.json.def",
+      "begin": "^(def)\\s+(?=(?:(?:as\\s+written|regex|python|html|css|javascript|js|sql|markdown|json|shell|bash|yaml)\\s+)*json\\s)((?:(?:as\\s+written|regex|python|html|css|javascript|js|sql|markdown|json|shell|bash|yaml)\\s+)+)(.*)$",
+      "beginCaptures": {
+        "1": {
+          "name": "storage.type.def.def"
+        },
+        "2": {
+          "patterns": [
+            {
+              "include": "#flags"
+            }
+          ]
+        },
+        "3": {
+          "patterns": [
+            {
+              "include": "#pattern"
+            }
+          ]
+        }
+      },
+      "end": "^(?=\\S)",
+      "patterns": [
+        {
+          "name": "meta.embedded.block.json",
+          "begin": "^(?=[ \\t])",
+          "end": "^(?=\\S)",
+          "patterns": [
+            {
+              "include": "source.json"
+            }
+          ]
+        }
+      ]
+    },
+    "shell-def": {
+      "name": "meta.def.shell.def",
+      "begin": "^(def)\\s+(?=(?:(?:as\\s+written|regex|python|html|css|javascript|js|sql|markdown|json|shell|bash|yaml)\\s+)*shell\\s)((?:(?:as\\s+written|regex|python|html|css|javascript|js|sql|markdown|json|shell|bash|yaml)\\s+)+)(.*)$",
+      "beginCaptures": {
+        "1": {
+          "name": "storage.type.def.def"
+        },
+        "2": {
+          "patterns": [
+            {
+              "include": "#flags"
+            }
+          ]
+        },
+        "3": {
+          "patterns": [
+            {
+              "include": "#pattern"
+            }
+          ]
+        }
+      },
+      "end": "^(?=\\S)",
+      "patterns": [
+        {
+          "name": "meta.embedded.block.shell",
+          "begin": "^(?=[ \\t])",
+          "end": "^(?=\\S)",
+          "patterns": [
+            {
+              "include": "source.shell"
+            }
+          ]
+        }
+      ]
+    },
+    "bash-def": {
+      "name": "meta.def.bash.def",
+      "begin": "^(def)\\s+(?=(?:(?:as\\s+written|regex|python|html|css|javascript|js|sql|markdown|json|shell|bash|yaml)\\s+)*bash\\s)((?:(?:as\\s+written|regex|python|html|css|javascript|js|sql|markdown|json|shell|bash|yaml)\\s+)+)(.*)$",
+      "beginCaptures": {
+        "1": {
+          "name": "storage.type.def.def"
+        },
+        "2": {
+          "patterns": [
+            {
+              "include": "#flags"
+            }
+          ]
+        },
+        "3": {
+          "patterns": [
+            {
+              "include": "#pattern"
+            }
+          ]
+        }
+      },
+      "end": "^(?=\\S)",
+      "patterns": [
+        {
+          "name": "meta.embedded.block.bash",
+          "begin": "^(?=[ \\t])",
+          "end": "^(?=\\S)",
+          "patterns": [
+            {
+              "include": "source.shell"
+            }
+          ]
+        }
+      ]
+    },
+    "yaml-def": {
+      "name": "meta.def.yaml.def",
+      "begin": "^(def)\\s+(?=(?:(?:as\\s+written|regex|python|html|css|javascript|js|sql|markdown|json|shell|bash|yaml)\\s+)*yaml\\s)((?:(?:as\\s+written|regex|python|html|css|javascript|js|sql|markdown|json|shell|bash|yaml)\\s+)+)(.*)$",
+      "beginCaptures": {
+        "1": {
+          "name": "storage.type.def.def"
+        },
+        "2": {
+          "patterns": [
+            {
+              "include": "#flags"
+            }
+          ]
+        },
+        "3": {
+          "patterns": [
+            {
+              "include": "#pattern"
+            }
+          ]
+        }
+      },
+      "end": "^(?=\\S)",
+      "patterns": [
+        {
+          "name": "meta.embedded.block.yaml",
+          "begin": "^(?=[ \\t])",
+          "end": "^(?=\\S)",
+          "patterns": [
+            {
+              "include": "source.yaml"
+            }
+          ]
+        }
+      ]
+    },
+    "def": {
+      "match": "^(def)\\s+((?:(?:as\\s+written|regex|python|html|css|javascript|js|sql|markdown|json|shell|bash|yaml)\\s+)*)(.*)$",
+      "captures": {
+        "1": {
+          "name": "storage.type.def.def"
+        },
+        "2": {
+          "patterns": [
+            {
+              "include": "#flags"
+            }
+          ]
+        },
+        "3": {
+          "patterns": [
+            {
+              "include": "#pattern"
+            }
+          ]
+        }
+      }
+    },
+    "flags": {
+      "patterns": [
+        {
+          "name": "storage.modifier.as-written.def",
+          "match": "as\\s+written"
+        },
+        {
+          "name": "storage.modifier.def",
+          "match": "regex|python|html|css|javascript|js|sql|markdown|json|shell|bash|yaml"
+        }
+      ]
+    },
+    "pattern": {
+      "patterns": [
+        {
+          "match": "(\\()(A\\d+)(:)\\s*(.*)(\\))",
+          "captures": {
+            "1": {
+              "name": "punctuation.definition.parameter.def"
+            },
+            "2": {
+              "name": "variable.parameter.def"
+            },
+            "3": {
+              "name": "punctuation.separator.def"
+            },
+            "4": {
+              "name": "string.regexp.def"
+            },
+            "5": {
+              "name": "punctuation.definition.parameter.def"
+            }
+          }
+        },
+        {
+          "name": "variable.parameter.def",
+          "match": "\\bA\\d+\\b"
+        },
+        {
+          "name": "keyword.operator.def",
+          "match": "[^\\w\\s]+"
+        },
+        {
+          "name": "entity.name.function.def",
+          "match": "[\\w.]+"
+        }
+      ]
+    },
+    "statement": {
+      "patterns": [
+        {
+          "match": "^(use)\\s+(?:(.+?)\\s+(from)\\s+)?(\\S+)\\s*$",
+          "captures": {
+            "1": {
+              "name": "keyword.control.import.def"
+            },
+            "2": {
+              "name": "variable.other.def"
+            },
+            "3": {
+              "name": "keyword.control.import.def"
+            },
+            "4": {
+              "name": "entity.name.namespace.def"
+            }
+          }
+        },
+        {
+          "match": "^(argument|comment)\\s+(is)\\s+(.*)$",
+          "captures": {
+            "1": {
+              "name": "keyword.control.def"
+            },
+            "2": {
+              "name": "keyword.control.def"
+            },
+            "3": {
+              "name": "variable.parameter.def"
+            }
+          }
+        },
+        {
+          "match": "^\\s*(shared)\\s+(\\w+)",
+          "captures": {
+            "1": {
+              "name": "keyword.control.def"
+            },
+            "2": {
+              "name": "variable.other.def"
+            }
+          }
+        },
+        {
+          "match": "^(indent)\\s+(\\d+)\\s*$",
+          "captures": {
+            "1": {
+              "name": "keyword.control.def"
+            },
+            "2": {
+              "name": "constant.numeric.def"
+            }
+          }
+        },
+        {
+          "match": "^\\s*(error)\\s+(.*)$",
+          "captures": {
+            "1": {
+              "name": "keyword.control.error.def"
+            },
+            "2": {
+              "name": "invalid.illegal.message.def"
+            }
+          }
+        }
+      ]
+    },
+    "means": {
+      "match": "^(?!def\\s|use\\s|comment\\s|argument\\s|error\\s)(\\S.*?)\\s+(means)\\s+(.*)$",
+      "captures": {
+        "1": {
+          "name": "entity.name.function.def"
+        },
+        "2": {
+          "name": "keyword.control.means.def"
+        },
+        "3": {
+          "patterns": [
+            {
+              "include": "#expression"
+            }
+          ]
+        }
+      }
+    },
+    "echo": {
+      "name": "meta.echo.def",
+      "begin": "^\\s*(`)",
+      "end": "(`)\\s*$",
+      "beginCaptures": {
+        "1": {
+          "name": "punctuation.definition.echo.def"
+        }
+      },
+      "endCaptures": {
+        "1": {
+          "name": "punctuation.definition.echo.def"
+        }
+      },
+      "patterns": [
+        {
+          "include": "#expression"
+        }
+      ]
+    },
+    "expression": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.def",
+          "begin": "\"",
+          "end": "\"",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.begin.def"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.def"
+            }
+          }
+        },
+        {
+          "name": "variable.parameter.def",
+          "match": "\\bA\\d+\\b"
+        },
+        {
+          "name": "keyword.control.question.def",
+          "match": "\\?"
+        },
+        {
+          "name": "keyword.control.loop.def",
+          "match": "\\b(?:repeat|times|while|for\\s+each|in|if|otherwise)\\b"
+        },
+        {
+          "name": "keyword.other.operator.def",
+          "match": "\\b(?:is\\s+greater\\s+than\\s+or\\s+equal\\s+to|greater\\s+than\\s+or\\s+equal\\s+to|is\\s+less\\s+than\\s+or\\s+equal\\s+to|less\\s+than\\s+or\\s+equal\\s+to|is\\s+greater\\s+than|multiplied\\s+by|greater\\s+than|is\\s+less\\s+than|is\\s+equal\\s+to|divided\\s+by|less\\s+than|equal\\s+to|minus|plus)\\b"
+        },
+        {
+          "name": "keyword.other.logical.def",
+          "match": "\\b(?:both|and|either|or|not)\\b"
+        },
+        {
+          "name": "keyword.control.means.def",
+          "match": "\\b(?:means)\\b"
+        },
+        {
+          "name": "keyword.other.shared.def",
+          "match": "^\\s*shared(?=\\s)"
+        },
+        {
+          "name": "keyword.other.def",
+          "match": "\\b(?:is\\s+not|is|are|does|do)\\b"
+        },
+        {
+          "name": "constant.numeric.def",
+          "match": "(?<![\\w.])[+-]?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?\\b"
+        },
+        {
+          "name": "constant.numeric.word.def",
+          "match": "\\b(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion)\\b"
+        },
+        {
+          "name": "constant.language.def",
+          "match": "\\b(?:True|False|None)\\b"
+        },
+        {
+          "name": "keyword.operator.def",
+          "match": ">=|<=|[<>=+\\-*/#:]"
+        },
+        {
+          "name": "punctuation.section.brackets.def",
+          "match": "[\\[\\],]"
+        }
+      ]
+    }
+  }
+}

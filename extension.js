@@ -1,0 +1,547 @@
+// Ctrl+click and hover in .def files and in the {{ ... }} of a package's HTML templates:
+// phrases go to (and show) their def, variables to where they get a value, and
+// use / template / assets are in names open the file.
+'use strict';
+const vscode = require('vscode');
+const lib = require('./lib');
+
+let cache = null; // file path -> index of every .def file in the workspace
+let texts = null; // file path -> text, to learn the languages (`language NAME`) first
+let log = null;   // the "def-lang" panel in View > Output
+
+// Hover marks its text with a faint background that is hard to see in dark themes,
+// so the hovered use of a def is underlined, spaces included: its fixed words in
+// one colour, the parts that fill its arguments in another (settings
+// "def-lang.underline.wordColor" and "def-lang.underline.argumentColor").
+let underline = null;
+let dotted = null; // the argument line
+let underlined = null; // the editor that has the underline now
+
+function showUnderline(document, solidRanges, dottedRanges = []) {
+  clearUnderline();
+  const editor = vscode.window.visibleTextEditors.find(e => e.document === document);
+  if (!editor) return;
+  editor.setDecorations(underline, solidRanges);
+  editor.setDecorations(dotted, dottedRanges);
+  underlined = editor;
+}
+
+function clearUnderline() {
+  if (underlined) {
+    underlined.setDecorations(underline, []);
+    underlined.setDecorations(dotted, []);
+  }
+  underlined = null;
+}
+
+async function indexes(document) {
+  const open = document.languageId === 'def-lang' ? document.getText() : '';
+  if (!cache) {
+    texts = new Map();
+    for (const uri of await vscode.workspace.findFiles('**/*.def', '**/node_modules/**', 5000)) {
+      try {
+        texts.set(uri.fsPath, Buffer.from(await vscode.workspace.fs.readFile(uri)).toString('utf8'));
+      } catch (error) { log.appendLine(`could not read ${uri.fsPath}: ${error}`); }
+    }
+    // libraries a program links to outside the workspace are part of it too
+    for (const uri of await vscode.workspace.findFiles('**/libraries.toml', '**/node_modules/**', 500)) {
+      for (const folder of lib.linkedFolders(require('path').dirname(uri.fsPath))) {
+        for (const name of require('fs').readdirSync(folder).filter(n => n.endsWith('.def'))) {
+          const file = require('path').join(folder, name);
+          if (!texts.has(file)) {
+            try { texts.set(file, require('fs').readFileSync(file, 'utf8')); } catch (error) { log.appendLine(`could not read ${file}: ${error}`); }
+          }
+        }
+      }
+    }
+    const languages = lib.languageNames(texts.values());
+    cache = new Map([...texts].map(([file, text]) => [file, lib.indexText(file, text, languages)]));
+    log.appendLine(`found ${cache.size} .def files, ${[...cache.values()].reduce((n, i) => n + i.defs.length, 0)} definitions, languages: ${[...languages].join(', ')}`);
+  }
+  // an open .def file as it is now, saved or not
+  const all = new Map(cache);
+  if (open) all.set(document.uri.fsPath, lib.indexText(document.uri.fsPath, open, lib.languageNames([...texts.values(), open])));
+  return [...all.values()];
+}
+
+// What is under the mouse: a phrase with its defs, or a variable with its first value.
+// In a .def file that is the whole line; in an HTML template of a package, the
+// def-lang inside {{ ... }}.
+async function lookup(document, position) {
+  const line = document.lineAt(position.line).text;
+  let text = line;
+  let shift = 0;
+  if (document.languageId === 'html') {
+    if (!lib.packageFolder(document.uri.fsPath)) return null;
+    const inside = lib.templateExpressionAt(line, position.character);
+    if (!inside) return null;
+    text = inside.text;
+    shift = inside.start;
+  }
+  const all = await indexes(document);
+  const current = all.find(i => i.file === document.uri.fsPath);
+  // comments (descriptions and examples) get no hover, underline or Ctrl+click
+  if (current && lib.isComment(current, position.line)) return null;
+  if (current && current.htmlLines.has(position.line)) {
+    // in a view's HTML: {name}, api="/api/x", loads="/api/x", href="/x", def="name"
+    const reference = lib.htmlReferenceAt(line, position.character);
+    if (!reference) return null;
+    const targets = lib.resolveHtmlReference(reference, document.uri.fsPath, all);
+    if (!targets.length) return null;
+    const where = new vscode.Range(position.line, reference.start, position.line, reference.end);
+    return { all, html: reference, targets, range: where, solid: [where], dotted: [] };
+  }
+  if (current && current.pythonLines.has(position.line)) return null;
+
+  // the language of a def line (def html ...): where that language is declared
+  if (/^def\s/.test(line)) {
+    const word = lib.wordAt(line, position.character);
+    const declared = word && lib.languageNames([...texts.values(), document.getText()]).has(word.text) && lib.findLanguage(word.text, all);
+    if (declared) {
+      const where = new vscode.Range(position.line, word.start, position.line, word.start + word.text.length);
+      return { all, html: { kind: 'language', value: word.text }, targets: [{ ...declared, label: 'the language' }], range: where, solid: [where], dotted: [] };
+    }
+  }
+
+  const range = (start, end) => new vscode.Range(position.line, shift + start, position.line, shift + end);
+  // only the defs of the files this file's program uses, like the engine
+  const visible = lib.visibleIndexes(document.uri.fsPath, all);
+  const hits = lib.findDefinitions(text, position.character - shift, visible);
+  if (hits.length) {
+    const order = lib.defOrder(lib.orderStarts(document.uri.fsPath), all);
+    const structure = lib.structureAt(text, position.character - shift, visible, order);
+    const spans = list => list.map(([start, end]) => range(start, end));
+    return {
+      all, hits, range: range(...hits[0].range),
+      solid: structure ? spans(structure.keywords) : [range(...hits[0].range)],
+      dotted: structure ? spans(structure.parts) : [],
+    };
+  }
+
+  const word = lib.wordAt(text, position.character - shift);
+  if (!word) return null;
+  const found = lib.findVariable(word.text, document.uri.fsPath, visible);
+  const wordRange = range(word.start, word.start + word.text.length);
+  return found ? { all, found, name: word.text, range: wordRange, solid: [wordRange], dotted: [] } : null;
+}
+
+function lineRange(all, file, line) {
+  return new vscode.Range(line, 0, line, all.find(i => i.file === file).lines[line].length);
+}
+
+// Any error in a provider goes to the panel instead of failing silently.
+function logged(name, provide) {
+  return async (...args) => {
+    try { return await provide(...args); } catch (error) { log.appendLine(`${name} failed: ${error && error.stack || error}`); return undefined; }
+  };
+}
+
+// A definition in a hover: its description, its examples (input → result), only its
+// def line(s) (the body is a Ctrl+click away), and a link to it.
+function describe(text, index, line) {
+  const description = lib.splitDescription(lib.descriptionOf(index, line));
+  // each comment line is its own line in the hover
+  if (description.text) text.appendMarkdown(description.text.split('\n').join('  \n') + '\n\n');
+  for (const example of description.examples) {
+    text.appendCodeblock(example.result ? `${example.input}\n→ ${example.result}` : example.input, 'def-lang');
+  }
+  text.appendCodeblock(lib.headerOf(index, line), 'def-lang');
+  text.appendMarkdown(where(index.file, line));
+}
+
+function where(file, line) {
+  const folder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(file));
+  const name = folder ? require('path').relative(folder.uri.fsPath, file) : file;
+  const target = vscode.Uri.file(file).with({ fragment: `L${line + 1}` });
+  return `[${name}:${line + 1}](${target})`;
+}
+
+function activate(context) {
+  setTimeout(() => watchFlags(context), 0);
+  setTimeout(() => watchErrors(context), 0);
+  registerCommands(context);
+  log = vscode.window.createOutputChannel('def-lang');
+  context.subscriptions.push(log);
+  // the palette's colours for light and dark themes (palette.json, from make_palette.py),
+  // unless a setting gives one colour
+  const palette = require('./palette.json').underline;
+  const line = (setting, part) => {
+    const value = vscode.workspace.getConfiguration('def-lang.underline').get(setting);
+    // a theme colour id like charts.yellow is the CSS variable --vscode-charts-yellow
+    const css = colour => colour.startsWith('#') ? colour : `var(--vscode-${colour.replace(/\./g, '-')})`;
+    const style = colour => part === 'word'
+      ? { borderStyle: 'none none solid none', borderWidth: '0 0 1px 0', borderColor: colour }
+      // arguments: 4px dashes with 5px gaps. VS Code has no option for dash spacing, so the
+      // dashes are a background drawn through textDecoration (works, but isn't an official API)
+      : { textDecoration: `none; background-image: linear-gradient(to right, ${colour} 4px, transparent 4px); `
+          + 'background-size: 9px 1px; background-repeat: repeat-x; background-position: left bottom' };
+    if (value) return vscode.window.createTextEditorDecorationType(style(css(value)));
+    return vscode.window.createTextEditorDecorationType({
+      light: style(palette[part].light), dark: style(palette[part].dark),
+    });
+  };
+  const makeLines = () => {
+    clearUnderline();
+    if (underline) underline.dispose();
+    if (dotted) dotted.dispose();
+    underline = line('wordColor', 'word');
+    dotted = line('argumentColor', 'argument');
+  };
+  makeLines();
+  context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
+    if (event.affectsConfiguration('def-lang.underline')) makeLines();
+  }));
+  context.subscriptions.push({ dispose: () => { underline.dispose(); dotted.dispose(); } });
+  context.subscriptions.push(
+    vscode.window.onDidChangeTextEditorSelection(clearUnderline),
+    vscode.window.onDidChangeActiveTextEditor(clearUnderline),
+    vscode.window.onDidChangeTextEditorVisibleRanges(clearUnderline),
+    vscode.workspace.onDidChangeTextDocument(clearUnderline),
+  );
+  log.appendLine(`def-lang ${context.extension.packageJSON.version} started: Ctrl+click and hover are on`);
+  const selector = { language: 'def-lang' };
+  // .def files, and the {{ ... }} parts of HTML templates
+  const withTemplates = [selector, { language: 'html' }];
+  const watcher = vscode.workspace.createFileSystemWatcher('**/*.def');
+  const recolour = new vscode.EventEmitter();
+  const forget = () => { cache = null; recolour.fire(); };
+  context.subscriptions.push(recolour);
+  watcher.onDidChange(forget);
+  watcher.onDidCreate(forget);
+  watcher.onDidDelete(forget);
+  context.subscriptions.push(watcher);
+
+  context.subscriptions.push(vscode.languages.registerDefinitionProvider(withTemplates, {
+    provideDefinition: logged('Ctrl+click', async (document, position) => {
+      const found = await lookup(document, position);
+      if (!found) return undefined;
+      // the whole phrase ("home page") is underlined, not just the word under the mouse
+      const targets = found.html ? found.targets.map(t => [t.file, t.line])
+        : found.hits ? found.hits.map(h => [h.file, h.line]) : [[found.found.file, found.found.line]];
+      return targets.map(([file, line]) => {
+        const target = lineRange(found.all, file, line);
+        return { originSelectionRange: found.range, targetUri: vscode.Uri.file(file), targetRange: target, targetSelectionRange: target };
+      });
+    }),
+  }));
+
+  context.subscriptions.push(vscode.languages.registerHoverProvider(withTemplates, {
+    provideHover: logged('hover', async (document, position) => {
+      clearUnderline();
+      // a flag on a def line (as written, regex): what it means and when to use it
+      const flag = document.languageId === 'def-lang' && /^def\s/.test(document.lineAt(position.line).text) &&
+        (await indexes(document), lib.flagAt(document.lineAt(position.line).text, position.character,
+          lib.languageNames([...texts.values(), document.getText()])));
+      if (flag) return new vscode.Hover(new vscode.MarkdownString(lib.FLAG_HELP[flag.flag]),
+        new vscode.Range(position.line, flag.start, position.line, flag.end));
+      const found = await lookup(document, position);
+      if (!found) return undefined;
+      const text = new vscode.MarkdownString();
+      if (found.html) {
+        // a def (a script, a view, a language, a {name} that is a def) is shown with its
+        // description; a variable or an api line is shown as that line
+        const isDef = target => ['puts in', 'the view', 'is the def', 'the language'].includes(target.label);
+        const intro = {
+          field: `**${found.html.value}** is filled in from the api's answer, as text.`,
+          api: `The api at **${found.html.value}**:`,
+          def: `This element's content is the result of **${found.html.value}**:`,
+        }[found.html.kind];
+        if (intro) text.appendMarkdown(intro + '\n\n');
+        found.targets.forEach((target, i) => {
+          const index = found.all.find(x => x.file === target.file);
+          if (found.html.kind === 'field') text.appendMarkdown(`${i ? '\n\n' : ''}It ${target.label}:\n\n`);
+          if (isDef(target)) describe(text, index, target.line);
+          else {
+            text.appendCodeblock(index.lines[target.line].trim(), 'def-lang');
+            text.appendMarkdown(where(target.file, target.line));
+          }
+        });
+      } else if (found.hits) {
+        found.hits.forEach((hit, i) => {
+          if (i) text.appendMarkdown('\n\n---\n\n');
+          describe(text, found.all.find(x => x.file === hit.file), hit.line);
+        });
+      } else {
+        const index = found.all.find(x => x.file === found.found.file);
+        text.appendMarkdown(`**${found.name}** gets its first value here:\n\n`);
+        text.appendCodeblock(index.lines[found.found.line].trim(), 'def-lang');
+        text.appendMarkdown(where(found.found.file, found.found.line));
+      }
+      showUnderline(document, found.solid, found.dotted);
+      return new vscode.Hover(text, found.range);
+    }),
+  }));
+
+  // Colour each def phrase as one item ("count the visit"), from the real defs,
+  // on top of the grammar's colours.
+  // def phrases are "function" (blue), your variables "variable" (yellow), and lines
+  // that start with a `comment is` marker "comment" (the grammar only knows //)
+  const legend = new vscode.SemanticTokensLegend(['function', 'variable', 'comment'], []);
+  context.subscriptions.push(vscode.languages.registerDocumentSemanticTokensProvider(selector, {
+    onDidChangeSemanticTokens: recolour.event,
+    provideDocumentSemanticTokens: logged('colours', async document => {
+      const all = await indexes(document);
+      const current = all.find(i => i.file === document.uri.fsPath);
+      const tokens = new vscode.SemanticTokensBuilder(legend);
+      // only the defs and variables of the files this file's program uses, like the engine
+      const visible = lib.visibleIndexes(document.uri.fsPath, all);
+      const names = lib.variableNames(visible);
+      for (let n = 0; n < document.lineCount; n++) {
+        const line = document.lineAt(n).text;
+        // in a view's HTML, {name} is a variable
+        if (current.htmlLines.has(n)) {
+          for (const m of line.matchAll(/\{(\w+)\}/g)) tokens.push(n, m.index + 1, m[1].length, 1, 0);
+          continue;
+        }
+        if (lib.isComment(current, n)) {
+          const start = line.length - line.trimStart().length;
+          tokens.push(n, start, line.trimEnd().length - start, 2, 0);
+          continue;
+        }
+        // def lines, `means` lines and `use` lines are coloured by the grammar; Python bodies by Python
+        if (current.pythonLines.has(n) || /^\s*(def\s|use\s|argument\s|comment\s|indent\s)/.test(line) || /^\S.*\smeans\s/.test(line)) continue;
+        const phrases = lib.phrasesIn(line, visible);
+        const items = [...phrases.map(p => [...p, 0]), ...lib.variablesIn(line, names, phrases).map(v => [...v, 1])];
+        for (const [start, end, type] of items.sort((a, b) => a[0] - b[0])) tokens.push(n, start, end - start, type, 0);
+      }
+      return tokens.build();
+    }),
+  }, legend));
+
+  // IntelliSense: def phrases (with tab stops for their arguments), variables,
+  // statements, flags after `def`, names after `use`, and in Python bodies what
+  // `self` and the helpers give (lib.completionsAt)
+  const KINDS = {
+    statement: vscode.CompletionItemKind.Keyword, phrase: vscode.CompletionItemKind.Function,
+    follow: vscode.CompletionItemKind.Operator, variable: vscode.CompletionItemKind.Variable,
+    flag: vscode.CompletionItemKind.Keyword, language: vscode.CompletionItemKind.Module,
+    import: vscode.CompletionItemKind.File, python: vscode.CompletionItemKind.Method,
+  };
+  context.subscriptions.push(vscode.languages.registerCompletionItemProvider(selector, {
+    provideCompletionItems: logged('completions', async (document, position) => {
+      const all = await indexes(document);
+      const current = all.find(i => i.file === document.uri.fsPath);
+      if (!current) return [];
+      const languages = new Set(['python', ...all.flatMap(i => i.languageLines.map(l => l.name))]);
+      return lib.completionsAt(current, position.line, position.character, all, languages).map(found => {
+        const made = new vscode.CompletionItem(found.label, KINDS[found.kind]);
+        made.insertText = new vscode.SnippetString(found.insert);
+        made.filterText = found.filter;
+        made.sortText = found.sort + found.label;
+        made.range = new vscode.Range(position.line, found.start, position.line, position.character);
+        if (found.detail) made.detail = found.detail;
+        if (found.documentation) made.documentation = new vscode.MarkdownString(found.documentation);
+        return made;
+      });
+    }),
+  }, '.'));
+
+  context.subscriptions.push(vscode.languages.registerDocumentLinkProvider(selector, {
+    provideDocumentLinks(document) {
+      const links = [];
+      for (let n = 0; n < document.lineCount; n++) {
+        for (const [start, end, target] of lib.findLinks(document.lineAt(n).text, document.uri.fsPath)) {
+          links.push(new vscode.DocumentLink(new vscode.Range(n, start, n, end), vscode.Uri.file(target)));
+        }
+      }
+      return links;
+    },
+  }));
+}
+
+// Warnings for flags a def probably needs (lib.flagWarnings), shown under the def line.
+function watchFlags(context) {
+  const diagnostics = vscode.languages.createDiagnosticCollection('def-lang');
+  context.subscriptions.push(diagnostics);
+  const timers = new Map();
+  const check = logged('flag warnings', async document => {
+    if (document.languageId !== 'def-lang') return;
+    const all = await indexes(document);
+    const current = all.find(i => i.file === document.uri.fsPath);
+    if (!current) return;
+    diagnostics.set(document.uri, lib.flagWarnings(current, all).map(w => {
+      const range = new vscode.Range(w.line, 0, w.line, document.lineAt(w.line).text.length);
+      const warning = new vscode.Diagnostic(range, w.message, vscode.DiagnosticSeverity.Warning);
+      warning.source = 'def-lang';
+      return warning;
+    }));
+  });
+  // while typing: once it pauses for half a second
+  const later = document => {
+    clearTimeout(timers.get(document.uri.toString()));
+    timers.set(document.uri.toString(), setTimeout(() => check(document), 500));
+  };
+  context.subscriptions.push(
+    vscode.workspace.onDidOpenTextDocument(check),
+    vscode.workspace.onDidSaveTextDocument(check),
+    vscode.workspace.onDidChangeTextDocument(event => later(event.document)),
+    vscode.workspace.onDidCloseTextDocument(document => diagnostics.delete(document.uri)),
+  );
+  vscode.workspace.textDocuments.forEach(check);
+}
+
+// Errors from the interpreter itself (`def-lang check`), which reads a program without
+// running it: unknown names, files it can't find, Python syntax errors, ... An open
+// file is checked as part of its program (its package's main.def), with its text as it
+// is now, saved or not; a file its program doesn't use is checked on its own.
+function watchErrors(context) {
+  const diagnostics = vscode.languages.createDiagnosticCollection('def-lang errors');
+  context.subscriptions.push(diagnostics);
+  const timers = new Map();
+  const latest = new Map(); // file -> number of its newest check, so an old answer is dropped
+  const run = (target, file, text) => new Promise(resolve => {
+    const separator = process.platform === 'win32' ? ';' : ':';
+    const env = { ...process.env, PYTHONPATH: [context.extensionPath, process.env.PYTHONPATH].filter(Boolean).join(separator) };
+    const child = childProcess.execFile(pythonCommand(), ['-m', 'deflang', 'check', target, '--json', '--text', file],
+      { env, cwd: lib.programFolder(file), timeout: 10000, maxBuffer: 10 * 1024 * 1024 }, (error, stdout) => {
+        try { resolve(JSON.parse(stdout)); } catch {
+          log.appendLine(`check ${target} gave no answer${error ? ': ' + error.message : ''}`);
+          resolve(null);
+        }
+      });
+    child.stdin.end(text);
+  });
+  const check = logged('errors', async document => {
+    if (document.languageId !== 'def-lang' || document.uri.scheme !== 'file') return;
+    const file = document.uri.fsPath;
+    const number = (latest.get(file) || 0) + 1;
+    latest.set(file, number);
+    // a file of a package is part of its program; a library's own files have no main.def
+    const home = lib.packageFolder(file);
+    const main = home ? pathNode.join(home, 'main.def') : null;
+    let answer = await run(main && main !== file ? main : file, file, document.getText());
+    if (answer && !answer.read.includes(file)) answer = await run(file, file, document.getText());
+    if (!answer || latest.get(file) !== number) return;
+    const byFile = new Map(answer.read.map(f => [f, []]));
+    byFile.set(file, byFile.get(file) || []);
+    for (const problem of answer.problems) {
+      if (!byFile.has(problem.file)) byFile.set(problem.file, []);
+      byFile.get(problem.file).push(problem);
+    }
+    for (const [f, problems] of byFile) {
+      // only files open in the editor: the others' errors show when they are opened
+      const open = vscode.workspace.textDocuments.find(d => d.uri.fsPath === f);
+      if (!open) continue;
+      diagnostics.set(open.uri, problems.map(problem => {
+        const n = Math.min(problem.line - 1, open.lineCount - 1);
+        const text = open.lineAt(n).text;
+        const range = new vscode.Range(n, text.length - text.trimStart().length, n, text.length);
+        const error = new vscode.Diagnostic(range, problem.message, vscode.DiagnosticSeverity.Error);
+        error.source = 'def-lang';
+        return error;
+      }));
+    }
+  });
+  const later = document => {
+    clearTimeout(timers.get(document.uri.toString()));
+    timers.set(document.uri.toString(), setTimeout(() => check(document), 500));
+  };
+  context.subscriptions.push(
+    vscode.workspace.onDidOpenTextDocument(check),
+    vscode.workspace.onDidSaveTextDocument(check),
+    vscode.workspace.onDidChangeTextDocument(event => later(event.document)),
+    vscode.workspace.onDidCloseTextDocument(document => diagnostics.delete(document.uri)),
+  );
+  vscode.workspace.textDocuments.forEach(check);
+}
+
+// ---- running programs and installing libraries, with the interpreter that comes with
+// the extension (its deflang/ folder) and your own Python
+
+const childProcess = require('child_process');
+const fsNode = require('fs');
+const pathNode = require('path');
+
+function pythonCommand() {
+  const chosen = vscode.workspace.getConfiguration('def-lang').get('python');
+  return chosen || (process.platform === 'win32' ? 'python' : 'python3');
+}
+
+// Whether that Python can run def-lang (3.11 or newer); says what to do if not.
+function pythonIsReady() {
+  const python = pythonCommand();
+  const found = childProcess.spawnSync(python, ['-c', 'import sys; print(sys.version_info >= (3, 11))'], { encoding: 'utf8' });
+  if (found.error || found.status !== 0) {
+    vscode.window.showErrorMessage(`def-lang needs Python 3.11 or newer, and "${python}" wasn't found. Install it from python.org, or set "def-lang.python" to the Python you have.`);
+    return false;
+  }
+  if (found.stdout.trim() !== 'True') {
+    vscode.window.showErrorMessage(`def-lang needs Python 3.11 or newer; "${python}" is older. Set "def-lang.python" to a newer one.`);
+    return false;
+  }
+  return true;
+}
+
+const quote = text => '"' + text.replace(/(["\\$`])/g, '\\$1') + '"';
+
+// A terminal with the bundled interpreter on PYTHONPATH; one per name, a new run replaces it.
+function terminal(context, name, cwd) {
+  for (const old of vscode.window.terminals) if (old.name === name) old.dispose();
+  const separator = process.platform === 'win32' ? ';' : ':';
+  const pythonPath = [context.extensionPath, process.env.PYTHONPATH].filter(Boolean).join(separator);
+  const made = vscode.window.createTerminal({ name, cwd, env: { PYTHONPATH: pythonPath } });
+  made.show();
+  return made;
+}
+
+// The program of the open file, or the first workspace folder.
+function currentProgram() {
+  const editor = vscode.window.activeTextEditor;
+  if (editor && editor.document.uri.scheme === 'file') return lib.programFolder(editor.document.uri.fsPath);
+  const folder = vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0];
+  return folder ? folder.uri.fsPath : null;
+}
+
+function registerCommands(context) {
+  context.subscriptions.push(vscode.commands.registerCommand('def-lang.run', logged('run', async uri => {
+    const file = (uri && uri.fsPath) || (vscode.window.activeTextEditor && vscode.window.activeTextEditor.document.uri.fsPath);
+    if (!file || !file.endsWith('.def')) return vscode.window.showInformationMessage('Open a .def file to run it.');
+    const document = vscode.workspace.textDocuments.find(d => d.uri.fsPath === file);
+    if (document && document.isDirty) await document.save();
+    if (!pythonIsReady()) return;
+    // a file of a package runs the package (its main.def); a library's file isn't a program
+    const home = lib.packageFolder(file);
+    const target = home && !fsNode.existsSync(pathNode.join(home, 'library.toml')) ? home : file;
+    terminal(context, 'def-lang: ' + pathNode.basename(target), lib.programFolder(file))
+      .sendText(`${pythonCommand()} -m deflang run ${quote(target)}`);
+  })));
+
+  context.subscriptions.push(vscode.commands.registerCommand('def-lang.console', logged('console', async () => {
+    if (!pythonIsReady()) return;
+    terminal(context, 'def-lang console', currentProgram() || undefined).sendText(`${pythonCommand()} -m deflang`);
+  })));
+
+  context.subscriptions.push(vscode.commands.registerCommand('def-lang.installLibrary', logged('install', async () => {
+    const program = currentProgram();
+    if (!program) return vscode.window.showInformationMessage('Open a program folder first.');
+    const from = await vscode.window.showQuickPick([
+      { label: 'From a git repository…', description: 'URL#folder, like https://example.com/libs.git#web', kind: 'git' },
+      { label: 'A local library…', description: 'a folder of this project (with a library.toml), used where it is', kind: 'folder' },
+    ], { placeHolder: `Install a library into ${program}` });
+    if (!from) return;
+    let source;
+    let flag = '';
+    if (from.kind === 'folder') {
+      const picked = await vscode.window.showOpenDialog({ canSelectFolders: true, canSelectFiles: false, defaultUri: vscode.Uri.file(program), openLabel: 'Use this library' });
+      if (!picked || !picked.length) return;
+      source = picked[0].fsPath;
+      flag = ' --link'; // a local library is never copied
+    } else {
+      source = await vscode.window.showInputBox({ prompt: 'Git URL of the library, with #folder if it is in one', placeHolder: 'https://example.com/libs.git#web' });
+      if (!source) return;
+      const where = await vscode.window.showQuickPick([
+        { label: 'Into this project', description: 'a copy in libraries/ (git leaves it out)', flag: '' },
+        { label: 'Global', description: 'one copy for every program, by version', flag: ' --global' },
+      ]);
+      if (!where) return;
+      flag = where.flag;
+    }
+    if (!pythonIsReady()) return;
+    terminal(context, 'def-lang install', program)
+      .sendText(`${pythonCommand()} -m deflang install ${quote(source)}${flag} --into ${quote(program)}`);
+  })));
+}
+
+function deactivate() {}
+
+module.exports = { activate, deactivate };

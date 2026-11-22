@@ -1,0 +1,371 @@
+{
+  "name": "def-lang",
+  "displayName": "def-lang",
+  "description": "The def-lang language: run .def programs, install libraries, and colours, Ctrl+click and hover for phrases, variables and imports",
+  "version": "0.28.0",
+  "publisher": "def-lang",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.60.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [
+    "onLanguage:def-lang",
+    "onLanguage:html",
+    "onCommand:def-lang.run",
+    "onCommand:def-lang.console",
+    "onCommand:def-lang.installLibrary"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "def-lang",
+        "aliases": [
+          "def-lang",
+          "def"
+        ],
+        "extensions": [
+          ".def"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "def-lang",
+        "scopeName": "source.def",
+        "path": "./syntaxes/def.tmLanguage.json",
+        "embeddedLanguages": {
+          "meta.embedded.block.python": "python",
+          "meta.embedded.block.html": "html",
+          "meta.embedded.block.css": "css",
+          "meta.embedded.block.javascript": "javascript",
+          "meta.embedded.block.js": "javascript",
+          "meta.embedded.block.sql": "sql",
+          "meta.embedded.block.markdown": "markdown",
+          "meta.embedded.block.json": "json",
+          "meta.embedded.block.shell": "shellscript",
+          "meta.embedded.block.bash": "shellscript",
+          "meta.embedded.block.yaml": "yaml"
+        }
+      }
+    ],
+    "configurationDefaults": {
+      "[def-lang]": {
+        "editor.semanticHighlighting.enabled": true
+      },
+      "editor.tokenColorCustomizations": {
+        "textMateRules": [
+          {
+            "scope": [
+              "storage.type.def.def",
+              "keyword.control.import.def"
+            ],
+            "settings": {
+              "foreground": "#88A9D8",
+              "fontStyle": "bold"
+            }
+          },
+          {
+            "scope": [
+              "keyword.control.def",
+              "keyword.control.means.def",
+              "keyword.control.loop.def",
+              "keyword.control.question.def",
+              "keyword.control.error.def"
+            ],
+            "settings": {
+              "foreground": "#88A9D8"
+            }
+          },
+          {
+            "scope": [
+              "keyword.other.def",
+              "keyword.other.logical.def",
+              "keyword.other.operator.def"
+            ],
+            "settings": {
+              "foreground": "#88A9D8"
+            }
+          },
+          {
+            "scope": [
+              "storage.modifier.def",
+              "storage.modifier.as-written.def"
+            ],
+            "settings": {
+              "foreground": "#7A8597",
+              "fontStyle": "italic"
+            }
+          },
+          {
+            "scope": [
+              "entity.name.function.def"
+            ],
+            "settings": {
+              "foreground": "#DCE1E8"
+            }
+          },
+          {
+            "scope": [
+              "variable.parameter.def"
+            ],
+            "settings": {
+              "foreground": "#E8C27A",
+              "fontStyle": "italic"
+            }
+          },
+          {
+            "scope": [
+              "string.quoted.double.def",
+              "punctuation.definition.string.begin.def",
+              "punctuation.definition.string.end.def",
+              "entity.name.namespace.def"
+            ],
+            "settings": {
+              "foreground": "#9CCB9B"
+            }
+          },
+          {
+            "scope": [
+              "constant.numeric.def",
+              "constant.numeric.word.def",
+              "constant.language.def"
+            ],
+            "settings": {
+              "foreground": "#C79BD6"
+            }
+          },
+          {
+            "scope": [
+              "comment.line.double-slash.def"
+            ],
+            "settings": {
+              "foreground": "#6E7787",
+              "fontStyle": "italic"
+            }
+          },
+          {
+            "scope": [
+              "keyword.operator.def",
+              "punctuation.section.brackets.def",
+              "punctuation.definition.echo.def",
+              "punctuation.definition.parameter.def",
+              "punctuation.separator.def"
+            ],
+            "settings": {
+              "foreground": "#88A9D8"
+            }
+          },
+          {
+            "scope": [
+              "string.regexp.def"
+            ],
+            "settings": {
+              "foreground": "#C79BD6"
+            }
+          },
+          {
+            "scope": [
+              "invalid.illegal.message.def"
+            ],
+            "settings": {
+              "foreground": "#E39A9A",
+              "fontStyle": "bold"
+            }
+          }
+        ],
+        "[*Light*]": {
+          "textMateRules": [
+            {
+              "scope": [
+                "storage.type.def.def",
+                "keyword.control.import.def"
+              ],
+              "settings": {
+                "foreground": "#2E5A9C",
+                "fontStyle": "bold"
+              }
+            },
+            {
+              "scope": [
+                "keyword.control.def",
+                "keyword.control.means.def",
+                "keyword.control.loop.def",
+                "keyword.control.question.def",
+                "keyword.control.error.def"
+              ],
+              "settings": {
+                "foreground": "#2E5A9C"
+              }
+            },
+            {
+              "scope": [
+                "keyword.other.def",
+                "keyword.other.logical.def",
+                "keyword.other.operator.def"
+              ],
+              "settings": {
+                "foreground": "#2E5A9C"
+              }
+            },
+            {
+              "scope": [
+                "storage.modifier.def",
+                "storage.modifier.as-written.def"
+              ],
+              "settings": {
+                "foreground": "#67707F",
+                "fontStyle": "italic"
+              }
+            },
+            {
+              "scope": [
+                "entity.name.function.def"
+              ],
+              "settings": {
+                "foreground": "#2E3440"
+              }
+            },
+            {
+              "scope": [
+                "variable.parameter.def"
+              ],
+              "settings": {
+                "foreground": "#8A6210",
+                "fontStyle": "italic"
+              }
+            },
+            {
+              "scope": [
+                "string.quoted.double.def",
+                "punctuation.definition.string.begin.def",
+                "punctuation.definition.string.end.def",
+                "entity.name.namespace.def"
+              ],
+              "settings": {
+                "foreground": "#3E7A3D"
+              }
+            },
+            {
+              "scope": [
+                "constant.numeric.def",
+                "constant.numeric.word.def",
+                "constant.language.def"
+              ],
+              "settings": {
+                "foreground": "#7A4290"
+              }
+            },
+            {
+              "scope": [
+                "comment.line.double-slash.def"
+              ],
+              "settings": {
+                "foreground": "#6A7380",
+                "fontStyle": "italic"
+              }
+            },
+            {
+              "scope": [
+                "keyword.operator.def",
+                "punctuation.section.brackets.def",
+                "punctuation.definition.echo.def",
+                "punctuation.definition.parameter.def",
+                "punctuation.separator.def"
+              ],
+              "settings": {
+                "foreground": "#2E5A9C"
+              }
+            },
+            {
+              "scope": [
+                "string.regexp.def"
+              ],
+              "settings": {
+                "foreground": "#7A4290"
+              }
+            },
+            {
+              "scope": [
+                "invalid.illegal.message.def"
+              ],
+              "settings": {
+                "foreground": "#A33A3A",
+                "fontStyle": "bold"
+              }
+            }
+          ]
+        }
+      },
+      "editor.semanticTokenColorCustomizations": {
+        "rules": {
+          "function:def-lang": "#DCE1E8",
+          "variable:def-lang": "#E8C27A"
+        },
+        "[*Light*]": {
+          "rules": {
+            "function:def-lang": "#2E3440",
+            "variable:def-lang": "#8A6210"
+          }
+        }
+      }
+    },
+    "configuration": {
+      "title": "def-lang",
+      "properties": {
+        "def-lang.underline.wordColor": {
+          "type": "string",
+          "default": "",
+          "description": "Colour of the hover underline under a def's fixed words: a theme colour id (like charts.blue) or a #rrggbb colour. Empty: the palette's steel blue, for light and dark themes."
+        },
+        "def-lang.underline.argumentColor": {
+          "type": "string",
+          "default": "",
+          "description": "Colour of the hover underline under the parts that fill a def's arguments: a theme colour id (like charts.yellow) or a #rrggbb colour. Empty: the palette's gold dashes, for light and dark themes."
+        },
+        "def-lang.python": {
+          "type": "string",
+          "default": "",
+          "description": "The Python (3.11 or newer) that runs def-lang programs. Empty: python3, or python on Windows."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "def-lang.run",
+        "title": "Run this program",
+        "category": "def-lang",
+        "icon": "$(play)"
+      },
+      {
+        "command": "def-lang.console",
+        "title": "Open console",
+        "category": "def-lang"
+      },
+      {
+        "command": "def-lang.installLibrary",
+        "title": "Install library\u2026",
+        "category": "def-lang"
+      }
+    ],
+    "menus": {
+      "editor/title/run": [
+        {
+          "command": "def-lang.run",
+          "when": "resourceLangId == def-lang",
+          "group": "navigation"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "def-lang.run",
+          "when": "resourceLangId == def-lang"
+        }
+      ]
+    }
+  }
+}

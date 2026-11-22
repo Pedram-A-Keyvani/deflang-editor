@@ -1,0 +1,12 @@
+{
+  "underline": {
+    "word": {
+      "dark": "#88A9D8",
+      "light": "#2E5A9C"
+    },
+    "argument": {
+      "dark": "#E8C27A",
+      "light": "#8A6210"
+    }
+  }
+}
