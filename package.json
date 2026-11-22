@@ -2,7 +2,7 @@
   "name": "def-lang",
   "displayName": "def-lang",
   "description": "The def-lang language: run .def programs, install libraries, and colours, Ctrl+click and hover for phrases, variables and imports",
-  "version": "0.29.0",
+  "version": "0.30.0",
   "publisher": "def-lang",
   "license": "MIT",
   "engines": {
@@ -18,7 +18,8 @@
     "onCommand:def-lang.run",
     "onCommand:def-lang.console",
     "onCommand:def-lang.installLibrary",
-    "onCommand:def-lang.installInterpreter"
+    "onCommand:def-lang.installInterpreter",
+    "onCommand:def-lang.checkForUpdates"
   ],
   "contributes": {
     "languages": [
@@ -337,6 +338,11 @@
           "type": "string",
           "default": "",
           "description": "The folder that holds the def-lang interpreter (its deflang folder), like ~/code for ~/code/deflang. Empty: the folder of your shell's def-lang alias (alias def-lang='PYTHONPATH=FOLDER python3 -m deflang'), else an installed deflang (pip, pipx)."
+        },
+        "def-lang.checkForUpdates": {
+          "type": "boolean",
+          "default": true,
+          "description": "Look for a newer def-lang on GitHub once a day, and offer to install it. Only GitHub sees the request."
         }
       }
     },
@@ -360,6 +366,11 @@
       {
         "command": "def-lang.installInterpreter",
         "title": "Install or update the interpreter",
+        "category": "def-lang"
+      },
+      {
+        "command": "def-lang.checkForUpdates",
+        "title": "Check for updates",
         "category": "def-lang"
       }
     ],

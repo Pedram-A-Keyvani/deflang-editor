@@ -18,6 +18,14 @@ window: Ctrl+Shift+P, "Developer: Reload Window".
 
 A newer `.vsix` installs over the old one the same way.
 
+## Updates
+
+VS Code updates only extensions from the Marketplace, so def-lang looks for updates
+itself: once a day it asks GitHub for its newest release, and if that is newer, it
+offers to install it (**Update**, **Not now**, **Don't ask again**). Only GitHub sees
+the request. Check now with **def-lang: Check for updates**; turn the daily check off
+with the setting `def-lang.checkForUpdates`.
+
 ## Uninstall
 
 ```console
@@ -47,6 +55,7 @@ reads your shell's `def-lang` alias. After changing the alias, reload the window
 - **Open console**: the def-lang console in a terminal.
 - **Install or update the interpreter**: installs it, as above; or updates it
   (`git pull`, or a new zip).
+- **Check for updates**: looks for a newer def-lang now (see Updates).
 - **Install library…**: from a git repository (`URL#folder`), into the project or
   global, or a local library (a folder of the project). It installs the libraries
   that library uses too.
@@ -68,6 +77,10 @@ reads your shell's `def-lang` alias. After changing the alias, reload the window
 - **Errors** are underlined in red as you type: unknown names, files that can't be
   found, a missing closing quote, a Python syntax error, and more. They come from the
   interpreter, which reads the program without running it.
+- **Format Document** (Shift+Alt+F, or on save with `editor.formatOnSave`): tidies the
+  layout, never what a line means. Indentation in spaces, one space between words
+  (quoted text and comments as they are), bodies in another language one level under
+  their def (their own layout kept), no trailing spaces, no runs of empty lines.
 - **Libraries** are found the way the interpreter finds them: copies in `libraries/`,
   local folders, and global ones.
 - **In HTML bodies**, `def="name"`, `{name}`, `api="…"` and `href="/…"` lead to the
@@ -79,6 +92,7 @@ reads your shell's `def-lang` alias. After changing the alias, reload the window
 |---|---|
 | `def-lang.folder` | the folder that holds the interpreter's `deflang` folder, like `~/code`. Empty: the one in your `def-lang` alias, else an installed deflang (pip, pipx) |
 | `def-lang.python` | the Python (3.11 or newer) that runs def-lang. Empty: the one in your `def-lang` alias, else `python3` (`python` on Windows) |
+| `def-lang.checkForUpdates` | look for a newer def-lang on GitHub once a day (on by default) |
 | `def-lang.underline.wordColor` | colour of the underline under a def's fixed words: a theme colour id (like `charts.blue`) or `#rrggbb` |
 | `def-lang.underline.argumentColor` | colour of the underline under the parts that fill a def's arguments |
 

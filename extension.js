@@ -160,6 +160,7 @@ function activate(context) {
   setTimeout(() => watchFlags(context), 0);
   setTimeout(() => watchErrors(context), 0);
   registerCommands(context);
+  setTimeout(() => checkForUpdates(context, false), 5000);
   log = vscode.window.createOutputChannel('def-lang');
   context.subscriptions.push(log);
   // the palette's colours for light and dark themes (palette.json, from make_palette.py),
@@ -335,6 +336,20 @@ function activate(context) {
       });
     }),
   }, '.'));
+
+  // Format Document (Shift+Alt+F, or on save with editor.formatOnSave): layout only
+  // (lib.formatText). The languages come from every file, like the colours.
+  context.subscriptions.push(vscode.languages.registerDocumentFormattingEditProvider(selector, {
+    provideDocumentFormattingEdits: logged('format', async document => {
+      const all = await indexes(document);
+      const languages = new Set(['python', ...all.flatMap(i => i.languageLines.map(l => l.name))]);
+      const text = document.getText();
+      const formatted = lib.formatText(text, languages);
+      if (formatted === text) return [];
+      const whole = new vscode.Range(document.positionAt(0), document.positionAt(text.length));
+      return [vscode.TextEdit.replace(whole, formatted)];
+    }),
+  }));
 
   context.subscriptions.push(vscode.languages.registerDocumentLinkProvider(selector, {
     provideDocumentLinks(document) {
@@ -664,6 +679,7 @@ function registerCommands(context) {
       .sendText(`${pythonCommand()} -m deflang run ${quote(target)}`);
   })));
 
+  context.subscriptions.push(vscode.commands.registerCommand('def-lang.checkForUpdates', logged('check for updates', () => checkForUpdates(context, true))));
   context.subscriptions.push(vscode.commands.registerCommand('def-lang.installInterpreter', logged('install interpreter', installInterpreter)));
   context.subscriptions.push(vscode.commands.registerCommand('def-lang.console', logged('console', async () => {
     if (!pythonIsReady()) return;
@@ -704,3 +720,81 @@ function registerCommands(context) {
 function deactivate() {}
 
 module.exports = { activate, deactivate };
+
+// ---- updates: VS Code only updates extensions from the Marketplace, so this one looks
+// at its own GitHub releases: at most once a day (or when asked), and only GitHub sees it
+
+const RELEASES = 'https://api.github.com/repos/Pedram-A-Keyvani/deflang-editor/releases/latest';
+const DAY = 24 * 60 * 60 * 1000;
+
+// GET a URL, following redirects (a release's file is served from another host): a Buffer.
+function download(url, redirects = 5) {
+  const https = require('https');
+  return new Promise((resolve, reject) => {
+    const request = https.get(url, { headers: { 'User-Agent': 'def-lang-vscode', Accept: 'application/vnd.github+json, application/octet-stream' }, timeout: 15000 }, response => {
+      if ([301, 302, 303, 307, 308].includes(response.statusCode) && response.headers.location && redirects > 0) {
+        response.resume();
+        return resolve(download(new URL(response.headers.location, url).toString(), redirects - 1));
+      }
+      if (response.statusCode !== 200) {
+        response.resume();
+        return reject(new Error(response.statusCode === 404 ? 'no release yet' : `GitHub answered ${response.statusCode}`));
+      }
+      const parts = [];
+      response.on('data', part => parts.push(part));
+      response.on('end', () => resolve(Buffer.concat(parts)));
+    });
+    request.on('timeout', () => request.destroy(new Error('GitHub did not answer')));
+    request.on('error', reject);
+  });
+}
+
+// Whether version a (like "0.31.0", or "v0.31.0") is newer than b.
+function isNewer(a, b) {
+  const parts = v => String(v).replace(/^v/, '').split('.').map(n => parseInt(n, 10) || 0);
+  const [x, y] = [parts(a), parts(b)];
+  for (let i = 0; i < Math.max(x.length, y.length); i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0);
+  return false;
+}
+
+async function checkForUpdates(context, asked) {
+  const settings = vscode.workspace.getConfiguration('def-lang');
+  if (!asked) {
+    if (!settings.get('checkForUpdates', true)) return;
+    const last = context.globalState.get('def-lang.lastUpdateCheck', 0);
+    if (Date.now() - last < DAY) return;
+  }
+  context.globalState.update('def-lang.lastUpdateCheck', Date.now());
+  const mine = context.extension.packageJSON.version;
+  let release;
+  try {
+    release = JSON.parse((await download(RELEASES)).toString('utf8'));
+  } catch (error) {
+    log.appendLine(`no update check: ${error.message}`);
+    if (asked) vscode.window.showWarningMessage(`def-lang couldn't look for updates: ${error.message}.`);
+    return;
+  }
+  const latest = String(release.tag_name || '').replace(/^v/, '');
+  const asset = (release.assets || []).find(a => a.name.endsWith('.vsix'));
+  if (!latest || !asset || !isNewer(latest, mine)) {
+    if (asked) vscode.window.showInformationMessage(`def-lang ${mine} is the latest.`);
+    return;
+  }
+  const update = 'Update', never = "Don't ask again";
+  const choice = await vscode.window.showInformationMessage(`def-lang ${latest} is out (you have ${mine}).`, update, 'Not now', never);
+  if (choice === never) return settings.update('checkForUpdates', false, vscode.ConfigurationTarget.Global);
+  if (choice !== update) return;
+  try {
+    const file = pathNode.join(require('os').tmpdir(), asset.name);
+    await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Updating def-lang to ${latest}` }, async () => {
+      fsNode.writeFileSync(file, await download(asset.browser_download_url));
+      await vscode.commands.executeCommand('workbench.extensions.installExtension', vscode.Uri.file(file));
+    });
+    const reload = 'Reload Window';
+    if (await vscode.window.showInformationMessage(`def-lang ${latest} is installed: reload the window to use it.`, reload) === reload) {
+      vscode.commands.executeCommand('workbench.action.reloadWindow');
+    }
+  } catch (error) {
+    vscode.window.showErrorMessage(`def-lang wasn't updated: ${error.message}`);
+  }
+}

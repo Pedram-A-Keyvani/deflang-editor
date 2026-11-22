@@ -1018,10 +1018,96 @@ function completionsAt(index, n, column, indexes, languages = new Set(['python']
   return items;
 }
 
+// ---- formatting (Format Document): layout only, never what a line means
+
+// Spaces between words collapse to one, outside quoted text.
+function collapseSpaces(content) {
+  let out = '', inText = false, space = false;
+  for (const ch of content) {
+    if (ch === '"') inText = !inText;
+    if (!inText && (ch === ' ' || ch === '\t')) { space = true; continue; }
+    if (space && out) out += ' ';
+    space = false;
+    out += ch;
+  }
+  return out;
+}
+
+// The formatted text of a .def file. What it changes, and why it is safe:
+// - tabs at the start of a line become `indent` spaces (a tab is one level, as in the engine);
+// - in a def-lang line, runs of spaces between words become one, outside "text"
+//   (patterns read words split by spaces; def lines keep their spaces: a regex may need them);
+// - a body in another language (Python, HTML, ...) moves as a whole to one level under
+//   its def, keeping its own layout (the engine strips a body's common indentation);
+// - trailing spaces go, empty lines collapse to one, and the file ends with one newline.
+// A line whose width isn't a whole number of levels is left as it is (the engine says why).
+function formatText(text, languages = new Set(['python'])) {
+  const lines = text.split(/\r?\n/);
+  const out = [];
+  let indent = 4;
+  let comment = '//';
+  let body = null; // the lines of a body in another language, until it ends
+  const lead = line => line.slice(0, line.length - line.trimStart().length);
+  const width = line => [...lead(line)].reduce((n, c) => n + (c === '\t' ? indent : 1), 0);
+  const blank = () => { if (out.length && out[out.length - 1] !== '') out.push(''); };
+
+  const endBody = () => {
+    if (!body) return;
+    const filled = body.filter(l => l.trim());
+    const least = Math.min(...filled.map(width));
+    let empties = 0;
+    for (const line of body) {
+      if (!line.trim()) { empties++; continue; }
+      if (empties) { out.push(''); empties = 0; }
+      out.push(' '.repeat(indent + width(line) - least) + line.trim());
+    }
+    if (empties) out.push('');
+    body = null;
+  };
+
+  let defKind = null; // after a def or language line: 'language' (its body is another language) or 'def-lang'
+  for (const raw of lines) {
+    const line = raw.replace(/\s+$/, '');
+    const indented = /^\s/.test(line);
+    if (body) {
+      if (!line || indented) { body.push(line); continue; }
+      endBody();
+    }
+    if (!line) { blank(); continue; }
+    const content = line.trim();
+    if (indented && defKind === 'language') { body = [line]; continue; }
+    if (!indented) {
+      defKind = null;
+      let m;
+      if ((m = /^def\s+(.*)$/.exec(content))) {
+        let rest = m[1], language = false, f;
+        for (;;) {
+          if ((f = FLAG.exec(rest))) rest = rest.slice(f[0].length);
+          else if ((f = /^(\w+)\s+/.exec(rest)) && languages.has(f[1])) { language = true; rest = rest.slice(f[0].length); }
+          else break;
+        }
+        defKind = language ? 'language' : 'def-lang';
+        out.push(content);
+        continue;
+      }
+      if (LANGUAGE_LINE.test(content)) { defKind = 'language'; out.push(content); continue; }
+      if ((m = /^comment\s+is\s+(.+)$/.exec(content))) comment = m[1].trim();
+      if ((m = /^indent\s+(\d+)$/.exec(content)) && Number(m[1]) > 0) indent = Number(m[1]);
+    }
+    if (width(line) % indent) { out.push(line); continue; } // not a whole level: as it is
+    const shown = content.startsWith(comment) ? content : collapseSpaces(content);
+    out.push(' '.repeat(width(line)) + shown);
+  }
+  endBody();
+  while (out.length && out[out.length - 1] === '') out.pop();
+  while (out.length && out[0] === '') out.shift();
+  return out.join('\n') + '\n';
+}
+
 module.exports = {
   FLAG_HELP, flagAt, flagWarnings, wrapsOnLine,
   indexText, findDefinitions, findVariable, findLinks, sourceOf, headerOf, descriptionOf, splitDescription, readableToRegex,
   packageFolder, programFolder, libraryFolder, linkedFolders, listedLibraries, globalFolder, resolveImport, visibleIndexes, templateExpressionAt, wordAt, phrasesIn, defOrder, orderStarts, structureAt,
-  completionsAt, defSnippet, patternParts, importNames,
+  completionsAt, defSnippet, patternParts, importNames, formatText,
   variableNames, variablesIn, languageNames, findLanguage, isComment, apiRoutes, viewPaths, htmlReferenceAt, resolveHtmlReference,
 };
