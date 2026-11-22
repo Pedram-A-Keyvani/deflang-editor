@@ -36,17 +36,19 @@ or in VS Code: Extensions view → def-lang → **Uninstall**.
 
 ## Before you start
 
-It runs the def-lang interpreter, with Python 3.11 or newer. If the interpreter isn't
-installed, the extension offers to install it:
+It runs the def-lang interpreter, with Python 3.11 or newer. When it starts, it looks
+for the interpreter: the `def-lang.folder` setting, your shell's `def-lang` alias, or
+an installed deflang. If it doesn't find one, it asks, at every start until it is set
+up (**Not now** waits for the next start; **Don't ask again** lasts until the next
+version of the extension):
 
-- **Install**: it gets the interpreter from GitHub into `~/.def-lang/deflang` (or a
-  folder you choose), with git or, without git, as a zip. Then it asks whether to
-  add the `def-lang` command to your terminal (one line in `~/.bashrc` or
-  `~/.zshrc`); it never changes them without a yes.
+- **Install**: gets the interpreter from GitHub into `~/.def-lang/deflang` (or a folder
+  you choose), with git or, without git, as a zip.
 - **I have it**: you pick your `deflang` folder.
 
-It also finds an interpreter you set up yourself, as the def-lang guide says: it
-reads your shell's `def-lang` alias. After changing the alias, reload the window.
+Then it sets everything up by itself: `def-lang.folder` shows the folder, and the
+`def-lang` command is added to your terminal (one line in `~/.bashrc` or `~/.zshrc`,
+unless a `def-lang` alias is there already). Open a new terminal to use it.
 
 ## Commands
 
@@ -97,11 +99,11 @@ reads your shell's `def-lang` alias. After changing the alias, reload the window
 
 | Setting | Is |
 |---|---|
-| `def-lang.folder` | the folder that holds the interpreter's `deflang` folder, like `~/code`. Empty: the one in your `def-lang` alias, else an installed deflang (pip, pipx) |
-| `def-lang.python` | the Python (3.11 or newer) that runs def-lang. Empty: the one in your `def-lang` alias, else `python3` (`python` on Windows) |
+| `def-lang.folder` | the folder that holds the interpreter's `deflang` folder, like `~/code`; filled in by the extension when it finds or installs it |
+| `def-lang.python` | the Python (3.11 or newer) that runs def-lang: `python3` (left at that, the one your `def-lang` alias names; `python` on Windows) |
 | `def-lang.checkForUpdates` | look for a newer def-lang on GitHub once a day (on by default) |
 | `def-lang.formatBodies` | Format Document formats bodies in other languages too (on by default) |
-| `def-lang.underline.wordColor` | colour of the underline under a def's fixed words: a theme colour id (like `charts.blue`) or `#rrggbb` |
+| `def-lang.underline.wordColor` | colour of the underline under a def's fixed words, `#rrggbb`: in `settings.json`, click its colour box to pick one (a theme colour id like `charts.blue` works too) |
 | `def-lang.underline.argumentColor` | colour of the underline under the parts that fill a def's arguments |
 
 The colours work with light and dark themes. Your own

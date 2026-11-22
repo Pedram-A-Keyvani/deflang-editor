@@ -477,7 +477,7 @@ function programFolder(file) {
 // A program's libraries.toml: [{ name, from, link }].
 function listedLibraries(owner) {
   // a program's or a library's libraries.toml: one table each,
-  //   name = { from = "...", link = true }  or  { from = "URL#folder", global = "0.1.0" }
+  //   name = { from = "...", link = true }  or  { from = "URL#folder", version = "0.1.0", global = true }
   let text;
   try { text = fs.readFileSync(path.join(owner, 'libraries.toml'), 'utf8'); } catch { return []; }
   const found = [];
@@ -486,8 +486,9 @@ function listedLibraries(owner) {
     if (!m) continue;
     const from = /\bfrom\s*=\s*"([^"]*)"/.exec(m[2]);
     if (!from) continue;
-    const version = /\bglobal\s*=\s*"([^"]*)"/.exec(m[2]);
-    found.push({ name: m[1], from: from[1], link: /\blink\s*=\s*true\b/.test(m[2]), global: version ? version[1] : null });
+    const version = /\bversion\s*=\s*"([^"]*)"/.exec(m[2]);
+    found.push({ name: m[1], from: from[1], link: /\blink\s*=\s*true\b/.test(m[2]), version: version ? version[1] : null,
+      global: /\bglobal\s*=\s*true\b/.test(m[2]) });
   }
   return found;
 }
@@ -501,7 +502,7 @@ function libraryFolder(owner, name) {
   const entry = listedLibraries(owner).find(e => e.name === name);
   if (!entry) return null;
   let found;
-  if (entry.global) found = path.join(globalFolder(), name, entry.global);
+  if (entry.global) found = path.join(globalFolder(), name, entry.version || '');
   else if (isGit(entry.from)) return null; // not installed yet
   else found = path.resolve(owner, entry.from);
   if (!fs.existsSync(path.join(found, 'library.toml'))) return null;
