@@ -116,6 +116,10 @@ grammar = {
                     "captures": {"1": {"name": "keyword.control.field.def"}, "2": {"name": "constant.language.def"}},
                 },
                 {
+                    "match": r"^[ \t]+(replaces)\s+(.*)$",
+                    "captures": {"1": {"name": "keyword.control.field.def"}, "2": {"name": "entity.name.namespace.def"}},
+                },
+                {
                     "match": r"^[ \t]+(flags|editor|takes)\s+(.*)$",
                     "captures": {"1": {"name": "keyword.control.field.def"}, "2": {"patterns": [{"include": "#flags"}]}},
                 },

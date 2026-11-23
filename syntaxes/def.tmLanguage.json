@@ -111,6 +111,17 @@
           }
         },
         {
+          "match": "^[ \\t]+(replaces)\\s+(.*)$",
+          "captures": {
+            "1": {
+              "name": "keyword.control.field.def"
+            },
+            "2": {
+              "name": "entity.name.namespace.def"
+            }
+          }
+        },
+        {
           "match": "^[ \\t]+(flags|editor|takes)\\s+(.*)$",
           "captures": {
             "1": {

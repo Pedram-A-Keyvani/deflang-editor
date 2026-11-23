@@ -12,12 +12,12 @@ const BUILT_IN = {
   statements: ['use', 'comment', 'argument', 'indent', 'error'],
 };
 const ENTRY_LINE = /^(language|flag|modifier|statement)\s+([\w-]+)\s*$/;
-// an entry's field, one level in (`does` is every kind's)
+// an entry's field, one level in (`does` and `replaces` are every kind's)
 const FIELDS = {
-  language: ['does', 'editor', 'flags'], flag: ['does', 'takes'],
-  modifier: ['does', 'applies to'], statement: ['does', 'words'],
+  language: ['does', 'editor', 'flags', 'replaces'], flag: ['does', 'takes', 'replaces'],
+  modifier: ['does', 'applies to', 'replaces'], statement: ['does', 'words', 'replaces'],
 };
-const FIELD_LINE = /^\s+(applies\s+to|does|words|flags|editor|takes)(?:\s+(.*?))?\s*$/;
+const FIELD_LINE = /^\s+(applies\s+to|does|words|flags|editor|takes|replaces)(?:\s+(.*?))?\s*$/;
 
 // The kernel's names: the built-in entries, those of `base`, and those declared in these
 // texts: { languages, flags, modifiers, statements } (Sets), and editors: a language ->
@@ -323,6 +323,14 @@ const isSyntax = phrase => phrase.split(/\s+/).every(word => SYNTAX_WORDS.has(wo
 // each phrase as one item.
 function phrasesIn(line, indexes) {
   return allPhrases(line, indexes).filter(p => !isSyntax(line.slice(p.start, p.end))).map(p => [p.start, p.end]);
+}
+
+// The fixed words of a library's statement on a line that is that statement (`greet`
+// in `greet Sam`), as [start, end]: they are colored like `use`.
+function statementWordsIn(line, indexes) {
+  const first = line.search(/\S/);
+  const found = allPhrases(line, indexes).filter(p => p.def.statement);
+  return found.length && found[0].start === first ? found.map(p => [p.start, p.end]) : [];
 }
 
 // Like phrasesIn, with syntax words too, and the def of each phrase: { start, end, def }.
@@ -640,13 +648,36 @@ function isComment(index, line) {
   return index.commentLines.has(line);
 }
 
-// Where the entry `kind name` is declared (`language css`, `modifier shared`): { file, line }, or null.
+// Where the entry `kind name` is declared (`language css`, `modifier shared`): { file, line },
+// or null. One that replaces another (`replaces FILE`) is the one used, so it comes first.
 function findEntry(kind, name, indexes) {
+  const found = [];
   for (const index of indexes) {
-    const found = index.entries.find(e => e.kind === kind && e.name === name);
-    if (found) return { file: index.file, line: found.line };
+    for (const e of index.entries) if (e.kind === kind && e.name === name) found.push({ file: index.file, line: e.line, replaces: !!e.fields.replaces });
   }
-  return null;
+  const best = found.find(f => f.replaces) || found[0];
+  return best ? { file: best.file, line: best.line } : null;
+}
+
+// For the entry on `line`: the entry it replaces (`replaces FILE`), and those that replace
+// it: { replaces: { file, line } | null, replacedBy: [{ file, line }] }.
+function replacementsOf(index, line, indexes) {
+  const entry = entryOn(index, line);
+  if (!entry) return { replaces: null, replacedBy: [] };
+  const real = file => { try { return fs.realpathSync(file); } catch { return path.resolve(file); } };
+  const named = (e, from) => e.fields.replaces && resolveImport(e.fields.replaces.value, from);
+  const others = [];
+  for (const other of indexes) {
+    for (const e of other.entries) {
+      if (e.kind === entry.kind && e.name === entry.name && !(other.file === index.file && e.line === line)) others.push({ file: other.file, line: e.line, e });
+    }
+  }
+  const replaced = named(entry, index.file);
+  const found = replaced && others.find(o => real(o.file) === real(replaced));
+  return {
+    replaces: found ? { file: found.file, line: found.line } : null,
+    replacedBy: others.filter(o => { const t = named(o.e, o.file); return t && real(t) === real(index.file); }).map(o => ({ file: o.file, line: o.line })),
+  };
 }
 
 // Where the language `name` is declared: { file, line }, or null.
@@ -952,6 +983,7 @@ const FIELD_SNIPPETS = {
   'editor': ['editor ${1:id}', "VS Code's language id, for coloring and formatting the bodies."],
   'flags': ['flags ${1:written}', 'The flags the language accepts, like `written, regex`; without it, none.'],
   'takes': ['takes ${1:number}', 'The kind of the flag\'s value (`def[cache 60]`: number); without it, none.'],
+  'replaces': ['replaces ${1:language/css}', 'Replaces the entry of the same kind and name that another file declared: that file, named the way `use` names it.'],
 };
 
 // What a Python body can use besides Python itself (the guide's Appendix D): what the
@@ -1346,7 +1378,7 @@ function render(parts, formatted) {
 }
 
 module.exports = {
-  FLAG_HELP, LANGUAGE_HELP, flagAt, flagWarnings, wrapsOnLine, kernelNames, definitionLine, kernelWordAt, findEntry, entryOn,
+  FLAG_HELP, LANGUAGE_HELP, flagAt, flagWarnings, wrapsOnLine, kernelNames, definitionLine, kernelWordAt, findEntry, entryOn, replacementsOf, statementWordsIn,
   indexText, findDefinitions, findVariable, findLinks, sourceOf, headerOf, descriptionOf, splitDescription, readableToRegex,
   packageFolder, programFolder, libraryFolder, linkedFolders, listedLibraries, globalFolder, resolveImport, visibleIndexes, templateExpressionAt, wordAt, phrasesIn, defOrder, orderStarts, structureAt,
   completionsAt, defSnippet, patternParts, importNames, formatText, formatTextWith, bodyLanguageAt,

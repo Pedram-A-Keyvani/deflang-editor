@@ -98,6 +98,14 @@ async function lookup(document, position) {
 
   // a modifier, the language or a flag of a definition line (`internal css[x] ...`):
   // where that entry is declared
+  // the name of an entry where it is declared (`language css`): that entry itself
+  const own = current && document.languageId === 'def-lang' && lib.entryOn(current, position.line);
+  if (own) {
+    const start = line.indexOf(own.name, own.kind.length);
+    if (position.character < start || position.character >= start + own.name.length) return null;
+    const where = new vscode.Range(position.line, start, position.line, start + own.name.length);
+    return { all, html: { kind: own.kind, value: own.name }, targets: [{ file: current.file, line: position.line, label: 'the ' + own.kind }], range: where, solid: [where], dotted: [] };
+  }
   const entry = document.languageId === 'def-lang' && lib.kernelWordAt(line, position.character, kernel);
   if (entry) {
     const declared = lib.findEntry(entry.kind, entry.name, all);
@@ -141,7 +149,7 @@ function logged(name, provide) {
 
 // A definition in a hover: its description, its examples (input → result), only its
 // def line(s) (the body is a Ctrl+click away), and a link to it.
-function describe(text, index, line) {
+function describe(text, index, line, all = null) {
   const description = lib.splitDescription(lib.descriptionOf(index, line));
   // each comment line is its own line in the hover
   if (description.text) text.appendMarkdown(description.text.split('\n').join('  \n') + '\n\n');
@@ -150,6 +158,12 @@ function describe(text, index, line) {
   }
   text.appendCodeblock(lib.headerOf(index, line), 'def-lang');
   text.appendMarkdown(where(index.file, line));
+  // an entry that replaces another (`replaces FILE`), or is replaced
+  if (all) {
+    const { replaces, replacedBy } = lib.replacementsOf(index, line, all);
+    if (replaces) text.appendMarkdown(`\n\nReplaces the one in ${where(replaces.file, replaces.line)}.`);
+    for (const by of replacedBy) text.appendMarkdown(`\n\nReplaced in ${where(by.file, by.line)}: that one is used.`);
+  }
 }
 
 function where(file, line) {
@@ -259,7 +273,7 @@ function activate(context) {
         found.targets.forEach((target, i) => {
           const index = found.all.find(x => x.file === target.file);
           if (found.html.kind === 'field') text.appendMarkdown(`${i ? '\n\n' : ''}It ${target.label}:\n\n`);
-          if (isDef(target)) describe(text, index, target.line);
+          if (isDef(target)) describe(text, index, target.line, found.all);
           else {
             text.appendCodeblock(index.lines[target.line].trim(), 'def-lang');
             text.appendMarkdown(where(target.file, target.line));
@@ -268,7 +282,7 @@ function activate(context) {
       } else if (found.hits) {
         found.hits.forEach((hit, i) => {
           if (i) text.appendMarkdown('\n\n---\n\n');
-          describe(text, found.all.find(x => x.file === hit.file), hit.line);
+          describe(text, found.all.find(x => x.file === hit.file), hit.line, found.all);
         });
       } else {
         const index = found.all.find(x => x.file === found.found.file);
@@ -322,7 +336,10 @@ function activate(context) {
         if (current.pythonLines.has(n) || current.definitionLines.has(n) || current.entryLines.has(n) || lib.entryOn(current, n) ||
           /^\s*(use\s|argument\s|comment\s|indent\s)/.test(line) || /^\S.*\smeans\s/.test(line)) continue;
         const phrases = lib.phrasesIn(line.slice(after), visible).map(([s, e]) => [s + after, e + after]);
-        const items = [...phrases.map(p => [...p, 0]), ...lib.variablesIn(line, names, phrases).filter(([s]) => s >= after).map(v => [...v, 1])];
+        // a library's statement: its words colored like `use`
+        const statement = new Set(lib.statementWordsIn(line, visible).map(([s, e]) => s + ':' + e));
+        const items = [...phrases.map(p => [...p, statement.has(p[0] + ':' + p[1]) ? 3 : 0]),
+          ...lib.variablesIn(line, names, phrases).filter(([s]) => s >= after).map(v => [...v, 1])];
         for (const [start, end, type] of items.sort((a, b) => a[0] - b[0])) tokens.push(n, start, end - start, type, 0);
       }
       return tokens.build();
