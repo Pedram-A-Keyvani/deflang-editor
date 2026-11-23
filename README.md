@@ -72,10 +72,10 @@ unless a `def-lang` alias is there already). Open a new terminal to use it.
 
 ## Editing
 
-- **Colours** for comments, definition lines (`python[written] …`) and their flags,
+- **Colors** for comments, definition lines (`python[written] …`) and their flags,
   entries (`language`, `modifier`, …) and their fields, modifiers, arguments, text, numbers,
   variables and the phrases of your defs. Bodies in another language (Python, HTML,
-  CSS, JavaScript, …) are coloured in that language.
+  CSS, JavaScript, …) are colored in that language.
 - **Hover and Ctrl+click** (or F12) on a phrase go to its definition and show its
   description: the comment lines right above it. They also work on variables, on the
   file after `use`, on a library's statements, and on the language, flags and
@@ -114,8 +114,8 @@ unless a `def-lang` alias is there already). Open a new terminal to use it.
 | `def-lang.python` | the Python (3.11 or newer) that runs def-lang: `python3` (left at that, the one your `def-lang` alias names; `python` on Windows) |
 | `def-lang.checkForUpdates` | look for a newer def-lang on GitHub once a day (on by default) |
 | `def-lang.formatBodies` | Format Document formats bodies in other languages too (on by default) |
-| `def-lang.underline.wordColor` | colour of the underline under a def's fixed words, `#rrggbb`: in `settings.json`, click its colour box to pick one (a theme colour id like `charts.blue` works too) |
-| `def-lang.underline.argumentColor` | colour of the underline under the parts that fill a def's arguments |
+| `def-lang.underline.wordColor` | color of the underline under a def's fixed words, `#rrggbb`: in `settings.json`, click its color box to pick one (a theme color id like `charts.blue` works too) |
+| `def-lang.underline.argumentColor` | color of the underline under the parts that fill a def's arguments |
 
-The colours work with light and dark themes. Your own
+The colors work with light and dark themes. Your own
 `editor.tokenColorCustomizations` replace them.

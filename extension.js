@@ -13,7 +13,7 @@ let log = null;   // the "def-lang" panel in View > Output
 
 // Hover marks its text with a faint background that is hard to see in dark themes,
 // so the hovered use of a def is underlined, spaces included: its fixed words in
-// one colour, the parts that fill its arguments in another (settings
+// one color, the parts that fill its arguments in another (settings
 // "def-lang.underline.wordColor" and "def-lang.underline.argumentColor").
 let underline = null;
 let dotted = null; // the argument line
@@ -171,18 +171,18 @@ function activate(context) {
   setTimeout(() => setUp(context), 2000);
   log = vscode.window.createOutputChannel('def-lang');
   context.subscriptions.push(log);
-  // the palette's colours for light and dark themes (palette.json, from make_palette.py),
-  // unless a setting gives one colour
+  // the palette's colors for light and dark themes (palette.json, from make_palette.py),
+  // unless a setting gives one color
   const palette = require('./palette.json').underline;
   const line = (setting, part) => {
     const value = vscode.workspace.getConfiguration('def-lang.underline').get(setting);
-    // a theme colour id like charts.yellow is the CSS variable --vscode-charts-yellow
-    const css = colour => colour.startsWith('#') ? colour : `var(--vscode-${colour.replace(/\./g, '-')})`;
-    const style = colour => part === 'word'
-      ? { borderStyle: 'none none solid none', borderWidth: '0 0 1px 0', borderColor: colour }
+    // a theme color id like charts.yellow is the CSS variable --vscode-charts-yellow
+    const css = color => color.startsWith('#') ? color : `var(--vscode-${color.replace(/\./g, '-')})`;
+    const style = color => part === 'word'
+      ? { borderStyle: 'none none solid none', borderWidth: '0 0 1px 0', borderColor: color }
       // arguments: 4px dashes with 5px gaps. VS Code has no option for dash spacing, so the
       // dashes are a background drawn through textDecoration (works, but isn't an official API)
-      : { textDecoration: `none; background-image: linear-gradient(to right, ${colour} 4px, transparent 4px); `
+      : { textDecoration: `none; background-image: linear-gradient(to right, ${color} 4px, transparent 4px); `
           + 'background-size: 9px 1px; background-repeat: repeat-x; background-position: left bottom' };
     if (value) return vscode.window.createTextEditorDecorationType(style(css(value)));
     return vscode.window.createTextEditorDecorationType({
@@ -212,9 +212,9 @@ function activate(context) {
   // .def files, and the {{ ... }} parts of HTML templates
   const withTemplates = [selector, { language: 'html' }];
   const watcher = vscode.workspace.createFileSystemWatcher('**/*.def');
-  const recolour = new vscode.EventEmitter();
-  const forget = () => { cache = null; recolour.fire(); };
-  context.subscriptions.push(recolour);
+  const recolor = new vscode.EventEmitter();
+  const forget = () => { cache = null; recolor.fire(); };
+  context.subscriptions.push(recolor);
   watcher.onDidChange(forget);
   watcher.onDidCreate(forget);
   watcher.onDidDelete(forget);
@@ -281,15 +281,15 @@ function activate(context) {
     }),
   }));
 
-  // Colour each def phrase as one item ("count the visit"), from the real defs,
-  // on top of the grammar's colours.
+  // Color each def phrase as one item ("count the visit"), from the real defs,
+  // on top of the grammar's colors.
   // def phrases are "function" (blue), your variables "variable" (yellow), lines that
   // start with a `comment is` marker "comment" (the grammar only knows //), and the
   // modifiers a library declares "keyword", like `shared`
   const legend = new vscode.SemanticTokensLegend(['function', 'variable', 'comment', 'keyword'], []);
   context.subscriptions.push(vscode.languages.registerDocumentSemanticTokensProvider(selector, {
-    onDidChangeSemanticTokens: recolour.event,
-    provideDocumentSemanticTokens: logged('colours', async document => {
+    onDidChangeSemanticTokens: recolor.event,
+    provideDocumentSemanticTokens: logged('colors', async document => {
       const all = await indexes(document);
       const current = all.find(i => i.file === document.uri.fsPath);
       const tokens = new vscode.SemanticTokensBuilder(legend);

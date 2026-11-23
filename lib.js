@@ -313,13 +313,13 @@ function findDefinitions(line, column, indexes) {
     .filter(h => !seen.has(h.file + ':' + h.line) && seen.add(h.file + ':' + h.line));
 }
 
-// Words that are the language's own syntax; they keep their keyword colour.
+// Words that are the language's own syntax; they keep their keyword color.
 const SYNTAX_WORDS = new Set(['is', 'not', 'are', 'does', 'do', 'and', 'or', 'both', 'either', 'if', 'otherwise',
   'repeat', 'times', 'while', 'for', 'each', 'in', 'means']);
 const isSyntax = phrase => phrase.split(/\s+/).every(word => SYNTAX_WORDS.has(word) || !/[\p{L}\p{N}_]/u.test(word));
 
 // Every def phrase on a line, as [start, end]: fixed words of one def that sit next
-// to each other ("count the visit"), longest first when two overlap. Used to colour
+// to each other ("count the visit"), longest first when two overlap. Used to color
 // each phrase as one item.
 function phrasesIn(line, indexes) {
   return allPhrases(line, indexes).filter(p => !isSyntax(line.slice(p.start, p.end))).map(p => [p.start, p.end]);
@@ -483,7 +483,7 @@ function structureAt(line, column, indexes, order) {
   return { keywords: runs, parts: gaps };
 }
 
-// Every variable name a program gives a value to, for colouring.
+// Every variable name a program gives a value to, for coloring.
 function variableNames(indexes) {
   const names = new Set();
   const patterns = [

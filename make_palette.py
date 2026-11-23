@@ -1,11 +1,11 @@
-"""Writes the def-lang colour palette into package.json. Edit this file, then run:
+"""Writes the def-lang color palette into package.json. Edit this file, then run:
     python3 make_palette.py
 
 Palette: https://coolors.co/palette/8ecae6-219ebc-023047-ffb703-fb8500
 The Fjord palette: steel blue for def-lang's own words (def, import, is, ...),
 gold for variables (A0 and your own), near-default text for def phrases, sage for
-quoted text, lilac for numbers. On white, the light colours of the palette are too faint to read, so the
-light set uses navy and darker shades of the same colours. Every text colour is
+quoted text, lilac for numbers. On white, the light colors of the palette are too faint to read, so the
+light set uses navy and darker shades of the same colors. Every text color is
 checked for contrast against a typical background (WCAG: 4.5 or more).
 """
 import json
@@ -14,28 +14,28 @@ from pathlib import Path
 SKY, BLUE, NAVY, AMBER, ORANGE = "#8ECAE6", "#219EBC", "#023047", "#FFB703", "#FB8500"
 # variables: a pale pink on dark backgrounds, a deeper rose of the same tone on white
 PINK, ROSE = "#F7C1D0", "#A8375C"
-# def phrases: the usual default text colour (Dark+ on dark backgrounds, Light Modern on white)
+# def phrases: the usual default text color (Dark+ on dark backgrounds, Light Modern on white)
 WHITE, BLACK = "#D4D4D4", "#3B3B3B"
 # quoted text: a soft green on dark backgrounds, a deeper green on white
 MINT, GREEN = "#A8D8A0", "#2F7A3A"
 
 
-def shade(colour, factor):
-    """The same colour, darker (factor < 1)."""
-    r, g, b = (int(colour[i:i + 2], 16) for i in (1, 3, 5))
+def shade(color, factor):
+    """The same color, darker (factor < 1)."""
+    r, g, b = (int(color[i:i + 2], 16) for i in (1, 3, 5))
     return "#{:02X}{:02X}{:02X}".format(*(round(c * factor) for c in (r, g, b)))
 
 
 # def (the language's own words) orange, variables pink, def phrases white/black, text green
-def mix(colour, other, amount):
-    """`colour` with `amount` (0..1) of `other` blended in."""
-    a = [int(colour[i:i + 2], 16) for i in (1, 3, 5)]
+def mix(color, other, amount):
+    """`color` with `amount` (0..1) of `other` blended in."""
+    a = [int(color[i:i + 2], 16) for i in (1, 3, 5)]
     b = [int(other[i:i + 2], 16) for i in (1, 3, 5)]
     return "#{:02X}{:02X}{:02X}".format(*(round(x + (y - x) * amount) for x, y in zip(a, b)))
 
 
-# Fjord: steel-blue language words, grey flags, phrases near the default text
-# colour, gold variables, sage text, lilac numbers. Flags and comments are meant
+# Fjord: steel-blue language words, gray flags, phrases near the default text
+# color, gold variables, sage text, lilac numbers. Flags and comments are meant
 # to sit back, so they only need contrast 3 (not 4.5).
 SUBTLE = {"flag": 3.0, "comment": 3.0}
 
@@ -81,11 +81,11 @@ SCOPES = [
 ]
 
 
-def luminance(colour):
+def luminance(color):
     def channel(c):
         c /= 255
         return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
-    r, g, b = (channel(int(colour[i:i + 2], 16)) for i in (1, 3, 5))
+    r, g, b = (channel(int(color[i:i + 2], 16)) for i in (1, 3, 5))
     return 0.2126 * r + 0.7152 * g + 0.0722 * b
 
 
@@ -106,12 +106,12 @@ def rules(palette):
 
 if __name__ == "__main__":
     for mode, palette in PALETTES.items():
-        for name, colour in palette.items():
-            if len(colour) == 7:
-                ratio = contrast(colour, BACKGROUND[mode])
+        for name, color in palette.items():
+            if len(color) == 7:
+                ratio = contrast(color, BACKGROUND[mode])
                 least = SUBTLE.get(name, 4.5)
-                assert ratio >= least, f"{mode} {name} {colour}: contrast {ratio:.1f} is below {least}"
-                print(f"{mode:5} {name:9} {colour}  contrast {ratio:4.1f}")
+                assert ratio >= least, f"{mode} {name} {color}: contrast {ratio:.1f} is below {least}"
+                print(f"{mode:5} {name:9} {color}  contrast {ratio:4.1f}")
 
     path = Path(__file__).parent / "package.json"
     package = json.loads(path.read_text())
@@ -132,11 +132,11 @@ if __name__ == "__main__":
     for name in ("wordColor", "argumentColor"):
         props[f"def-lang.underline.{name}"]["default"] = ""
     props["def-lang.underline.wordColor"]["description"] = (
-        "Colour of the hover underline under a def's fixed words: a theme colour id (like charts.blue) "
-        "or a #rrggbb colour. Empty: the palette's steel blue, for light and dark themes.")
+        "Color of the hover underline under a def's fixed words: a theme color id (like charts.blue) "
+        "or a #rrggbb color. Empty: the palette's steel blue, for light and dark themes.")
     props["def-lang.underline.argumentColor"]["description"] = (
-        "Colour of the hover underline under the parts that fill a def's arguments: a theme colour id "
-        "(like charts.yellow) or a #rrggbb colour. Empty: the palette's gold dashes, for light and dark themes.")
+        "Color of the hover underline under the parts that fill a def's arguments: a theme color id "
+        "(like charts.yellow) or a #rrggbb color. Empty: the palette's gold dashes, for light and dark themes.")
     path.write_text(json.dumps(package, indent=2, ensure_ascii=False) + "\n")
     (Path(__file__).parent / "palette.json").write_text(json.dumps({"underline": UNDERLINE}, indent=2) + "\n")
     print("wrote", path, "and palette.json")
