@@ -86,7 +86,7 @@ unless a `def-lang` alias is there already). Open a new terminal to use it.
 - **IntelliSense** offers the phrases a file's program can see, with Tab between the
   arguments (`repeat ▮ times : ▯`), and also variables, statements, languages,
   modifiers, an entry's fields, the flags in the brackets after a language, files after
-  `use`, and in a Python body what `self.` gives.
+  `use`, and in a Python body what `self.` and `self["` give.
 - **Errors** are underlined in red as you type: unknown names, files that can't be
   found, a missing closing quote, a Python syntax error, and more. They come from the
   interpreter, which reads the program without running it.

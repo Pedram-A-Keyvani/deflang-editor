@@ -884,7 +884,7 @@ const FLAG_HELP = {
 // ... and each built-in language
 const LANGUAGE_HELP = {
   'def': '**def**: the body is def-lang. Flags go in brackets right after it: `def[written] ...`.',
-  'python': '**python**: the body is Python. It gets `self` (the interpreter) and the arguments.',
+  'python': '**python**: the body is Python. It gets `self` (the kernel: `self["variables"]`, `self.run`, ...) and the arguments.',
 };
 
 // The flag under the cursor on a definition line (`python[written] ...`): { flag, start, end }, or null.
@@ -908,7 +908,7 @@ function bodyOf(index, start) {
 }
 
 // Flags a def probably needs but doesn't have: [{ line, message }]. A Python body that
-// runs or names an argument itself (self.run(A1), self.variables[A0]) gets values unless the
+// runs or names an argument itself (self.run(A1), self["variables"][A0]) gets values unless the
 // def is `written`.
 function flagWarnings(index, indexes) {
   const warnings = [];
@@ -918,7 +918,7 @@ function flagWarnings(index, indexes) {
     const flags = def.flags || new Set();
     if (def.language === 'python' && !flags.has('written')) {
       const body = bodyOf(index, start).join('\n');
-      const m = /self\.run\(\s*(A\d+)\s*\)|self\.variables\[\s*(A\d+)\s*\]|self\.(?:alias|share)\(\s*(A\d+)/.exec(body);
+      const m = /self\.run\(\s*(A\d+)\s*\)|self\[\s*["']variables["']\s*\]\[\s*(A\d+)\s*\]|self\[\s*["'](?:aliases|files)["']\s*\].*?\[\s*(A\d+)\s*\]/.exec(body);
       if (m) {
         const name = m[1] || m[2] || m[3];
         warnings.push({ line: start, message: `${name} is already a value here, not its words. If this def needs the words of ${name} (a name, or code to run itself), add the flag: python[written].` });
@@ -954,20 +954,32 @@ const FIELD_SNIPPETS = {
   'takes': ['takes ${1:number}', 'The kind of the flag\'s value (`def[cache 60]`: number); without it, none.'],
 };
 
-// What a Python body can use besides Python itself (README: Python bodies).
+// What a Python body can use besides Python itself (the guide's Appendix D): what the
+// interpreter does, self.run(...), and what it has, the kernel's tree, self["..."].
 const PYTHON_SELF = [
   ['run', 'run(${1:text})', 'Runs def-lang text and returns its value.'],
   ['say', 'say(${1:value})', 'Prints a value.'],
-  ['variables', 'variables', 'The variables of the running code: `self.variables["x"] = 5`.'],
-  ['share', 'share(${1:name}, ${2:value})', 'Makes a shared program variable.'],
-  ['answer', 'answer', "The last question's answer: True, False, or None before any question."],
-  ['alias', 'alias(${1:phrase}, ${2:words})', 'Makes `phrase` read as `words`.'],
-  ['lookup', 'lookup(${1:name})', 'A variable\'s value, or an "unknown name" error.'],
-  ['file_path', 'file_path(${1:name})', "A file's path, relative to the program's folder."],
-  ['store', 'store(${1:"name"})', "A dict for a library's own state: the same dict every time for the same name."],
+  ['own_variables', 'own_variables(${1:file})', "In a `with` block, lines get variables of their own, on top of the file's (a web request)."],
+  ['changed_files', 'changed_files()', 'The files saved since they were read.'],
+  ['reload', 'reload(${1:path})', 'Reads a file again, in place of its old defs.'],
+];
+const KERNEL_KEYS = [
+  ['variables', 'The variables of the running code: its def call\'s own, its file\'s, and the shared ones its file names: `self["variables"]["x"] = 5`.'],
+  ['answer', 'Whether the lines one level below run: they run if it is True; None makes them an error. The only part that is set: `self["answer"] = True`.'],
+  ['aliases', '`{phrase: words}`: phrase reads as words, longer phrases first.'],
+  ['store', 'A library\'s own state: `self["store"]["web"]`, a dict made on first use.'],
+  ['file', 'The file running now.'],
+  ['program', 'The program\'s folder: `self["program"] / "data.txt"`.'],
+  ['files', 'A file\'s place: `self["files"][FILE]`: its "comment", "argument", "indent", "variables", and "names" (the shared variables it uses).'],
+  ['shared', 'The shared variables\' values: `{(FILE, NAME): value}`.'],
+  ['definitions', 'Every definition, in the order made.'],
+  ['language', 'The language entries: `self["language"]["python"]`.'],
+  ['flag', 'The flag entries.'],
+  ['modifier', 'The modifier entries.'],
+  ['statement', 'The statement entries.'],
 ];
 const PYTHON_HELPERS = [
-  ['self', 'self', 'The interpreter: self.run, self.say, self.variables, ...'],
+  ['self', 'self', 'The kernel: what it has, self["variables"], self["answer"], ...; what it does, self.run, self.say.'],
   ['number', 'number(${1:value})', 'The value as a number, or an error.'],
   ['parse_number', 'parse_number(${1:text})', 'The text as a number, or None.'],
   ['as_text', 'as_text(${1:value})', 'The value as text a person reads (what `say` prints).'],
@@ -1121,6 +1133,11 @@ function completionsAt(index, n, column, indexes, kernel = kernelNames([])) {
     if (owner && owner.language !== true && owner.language !== 'python') return [];
     if (/\bself\.\w*$/.test(before)) {
       for (const [label, insert, doc] of PYTHON_SELF) add('python', label, insert, doc);
+      return items;
+    }
+    // the kernel's tree: self["variables"], ...
+    if (/\bself\[\s*["']\w*$/.test(before)) {
+      for (const [label, doc] of KERNEL_KEYS) add('python', label, label, doc);
       return items;
     }
     if (/["'][^"']*$/.test(before)) return [];
