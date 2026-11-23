@@ -72,17 +72,20 @@ unless a `def-lang` alias is there already). Open a new terminal to use it.
 
 ## Editing
 
-- **Colours** for comments, `def` lines and their flags, arguments, text, numbers,
+- **Colours** for comments, definition lines (`python[written] …`) and their flags,
+  entries (`language`, `modifier`, …) and their fields, modifiers, arguments, text, numbers,
   variables and the phrases of your defs. Bodies in another language (Python, HTML,
   CSS, JavaScript, …) are coloured in that language.
-- **Hover and Ctrl+click** (or F12) on a phrase go to its `def` and show its
-  description: the comment lines right above the def. They also work on variables,
-  on the file after `use`, on flags (`as written`, `regex`) and on a language name
-  after `def`.
+- **Hover and Ctrl+click** (or F12) on a phrase go to its definition and show its
+  description: the comment lines right above it. They also work on variables, on the
+  file after `use`, on a library's statements, and on the language, flags and
+  modifiers of a definition line (`internal css[…]`): they lead to the entry that
+  declares them, with its comment lines as its help.
 - **Underlines** on hover show how a line is read: a def's fixed words solid, the
   parts that fill its arguments dashed.
 - **IntelliSense** offers the phrases a file's program can see, with Tab between the
-  arguments (`repeat ▮ times : ▯`), and also variables, statements, flags, files after
+  arguments (`repeat ▮ times : ▯`), and also variables, statements, languages,
+  modifiers, an entry's fields, the flags in the brackets after a language, files after
   `use`, and in a Python body what `self.` gives.
 - **Errors** are underlined in red as you type: unknown names, files that can't be
   found, a missing closing quote, a Python syntax error, and more. They come from the

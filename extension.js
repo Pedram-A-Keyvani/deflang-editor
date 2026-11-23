@@ -6,7 +6,9 @@ const vscode = require('vscode');
 const lib = require('./lib');
 
 let cache = null; // file path -> index of every .def file in the workspace
-let texts = null; // file path -> text, to learn the languages (`language NAME`) first
+let texts = null; // file path -> text, to learn the kernel's entries (`language css`, `modifier shared`) first
+let kernelBase = null; // the kernel's names from every .def file (lib.kernelNames)
+let kernel = null;     // ... and from the open file as it is now, saved or not
 let log = null;   // the "def-lang" panel in View > Output
 
 // Hover marks its text with a faint background that is hard to see in dark themes,
@@ -54,13 +56,14 @@ async function indexes(document) {
         }
       }
     }
-    const languages = lib.languageNames(texts.values());
-    cache = new Map([...texts].map(([file, text]) => [file, lib.indexText(file, text, languages)]));
-    log.appendLine(`found ${cache.size} .def files, ${[...cache.values()].reduce((n, i) => n + i.defs.length, 0)} definitions, languages: ${[...languages].join(', ')}`);
+    kernelBase = lib.kernelNames(texts.values());
+    cache = new Map([...texts].map(([file, text]) => [file, lib.indexText(file, text, kernelBase)]));
+    log.appendLine(`found ${cache.size} .def files, ${[...cache.values()].reduce((n, i) => n + i.defs.length, 0)} definitions, languages: ${[...kernelBase.languages].join(', ')}, modifiers: ${[...kernelBase.modifiers].join(', ')}`);
   }
   // an open .def file as it is now, saved or not
+  kernel = open ? lib.kernelNames([open], kernelBase) : kernelBase;
   const all = new Map(cache);
-  if (open) all.set(document.uri.fsPath, lib.indexText(document.uri.fsPath, open, lib.languageNames([...texts.values(), open])));
+  if (open) all.set(document.uri.fsPath, lib.indexText(document.uri.fsPath, open, kernel));
   return [...all.values()];
 }
 
@@ -93,14 +96,14 @@ async function lookup(document, position) {
   }
   if (current && current.pythonLines.has(position.line)) return null;
 
-  // the language of a def line (def html ...): where that language is declared
-  if (/^def\s/.test(line)) {
-    const word = lib.wordAt(line, position.character);
-    const declared = word && lib.languageNames([...texts.values(), document.getText()]).has(word.text) && lib.findLanguage(word.text, all);
-    if (declared) {
-      const where = new vscode.Range(position.line, word.start, position.line, word.start + word.text.length);
-      return { all, html: { kind: 'language', value: word.text }, targets: [{ ...declared, label: 'the language' }], range: where, solid: [where], dotted: [] };
-    }
+  // a modifier, the language or a flag of a definition line (`internal css[x] ...`):
+  // where that entry is declared
+  const entry = document.languageId === 'def-lang' && lib.kernelWordAt(line, position.character, kernel);
+  if (entry) {
+    const declared = lib.findEntry(entry.kind, entry.name, all);
+    if (!declared) return null;
+    const where = new vscode.Range(position.line, entry.start, position.line, entry.end);
+    return { all, html: { kind: entry.kind, value: entry.name }, targets: [{ ...declared, label: 'the ' + entry.kind }], range: where, solid: [where], dotted: [] };
   }
 
   const range = (start, end) => new vscode.Range(position.line, shift + start, position.line, shift + end);
@@ -234,19 +237,19 @@ function activate(context) {
   context.subscriptions.push(vscode.languages.registerHoverProvider(withTemplates, {
     provideHover: logged('hover', async (document, position) => {
       clearUnderline();
-      // a flag on a def line (as written, regex): what it means and when to use it
-      const flag = document.languageId === 'def-lang' && /^def\s/.test(document.lineAt(position.line).text) &&
-        (await indexes(document), lib.flagAt(document.lineAt(position.line).text, position.character,
-          lib.languageNames([...texts.values(), document.getText()])));
-      if (flag) return new vscode.Hover(new vscode.MarkdownString(lib.FLAG_HELP[flag.flag]),
-        new vscode.Range(position.line, flag.start, position.line, flag.end));
+      // a built-in flag or language on a definition line (`python[written]`): what it
+      // means; a declared one shows its entry (lookup)
+      const word = document.languageId === 'def-lang' &&
+        (await indexes(document), lib.kernelWordAt(document.lineAt(position.line).text, position.character, kernel));
+      const help = word && (word.kind === 'flag' ? lib.FLAG_HELP : word.kind === 'language' ? lib.LANGUAGE_HELP : {})[word.name];
+      if (help) return new vscode.Hover(new vscode.MarkdownString(help), new vscode.Range(position.line, word.start, position.line, word.end));
       const found = await lookup(document, position);
       if (!found) return document.languageId === 'def-lang' ? embeddedHover(document, position) : undefined;
       const text = new vscode.MarkdownString();
       if (found.html) {
         // a def (a script, a view, a language, a {name} that is a def) is shown with its
         // description; a variable or an api line is shown as that line
-        const isDef = target => ['puts in', 'the view', 'is the def', 'the language'].includes(target.label);
+        const isDef = target => ['puts in', 'the view', 'is the def', 'the language', 'the modifier', 'the flag'].includes(target.label);
         const intro = {
           field: `**${found.html.value}** is filled in from the api's answer, as text.`,
           api: `The api at **${found.html.value}**:`,
@@ -280,9 +283,10 @@ function activate(context) {
 
   // Colour each def phrase as one item ("count the visit"), from the real defs,
   // on top of the grammar's colours.
-  // def phrases are "function" (blue), your variables "variable" (yellow), and lines
-  // that start with a `comment is` marker "comment" (the grammar only knows //)
-  const legend = new vscode.SemanticTokensLegend(['function', 'variable', 'comment'], []);
+  // def phrases are "function" (blue), your variables "variable" (yellow), lines that
+  // start with a `comment is` marker "comment" (the grammar only knows //), and the
+  // modifiers a library declares "keyword", like `shared`
+  const legend = new vscode.SemanticTokensLegend(['function', 'variable', 'comment', 'keyword'], []);
   context.subscriptions.push(vscode.languages.registerDocumentSemanticTokensProvider(selector, {
     onDidChangeSemanticTokens: recolour.event,
     provideDocumentSemanticTokens: logged('colours', async document => {
@@ -304,10 +308,21 @@ function activate(context) {
           tokens.push(n, start, line.trimEnd().length - start, 2, 0);
           continue;
         }
-        // def lines, `means` lines and `use` lines are coloured by the grammar; Python bodies by Python
-        if (current.pythonLines.has(n) || /^\s*(def\s|use\s|argument\s|comment\s|indent\s)/.test(line) || /^\S.*\smeans\s/.test(line)) continue;
-        const phrases = lib.phrasesIn(line, visible);
-        const items = [...phrases.map(p => [...p, 0]), ...lib.variablesIn(line, names, phrases).map(v => [...v, 1])];
+        // modifiers at the start of a line (`internal def ...`, `shared visits is 0`)
+        let after = 0;
+        for (;;) {
+          const word = lib.kernelWordAt(line, after, kernel);
+          if (!word || word.kind !== 'modifier' || word.start !== after) break;
+          tokens.push(n, word.start, word.end - word.start, 3, 0);
+          const next = line.slice(word.end).search(/\S/);
+          after = next < 0 ? line.length : word.end + next;
+        }
+        // definition lines, entries, `means` lines and `use` lines are colored by the
+        // grammar; Python bodies by Python
+        if (current.pythonLines.has(n) || current.definitionLines.has(n) || current.entryLines.has(n) || lib.entryOn(current, n) ||
+          /^\s*(use\s|argument\s|comment\s|indent\s)/.test(line) || /^\S.*\smeans\s/.test(line)) continue;
+        const phrases = lib.phrasesIn(line.slice(after), visible).map(([s, e]) => [s + after, e + after]);
+        const items = [...phrases.map(p => [...p, 0]), ...lib.variablesIn(line, names, phrases).filter(([s]) => s >= after).map(v => [...v, 1])];
         for (const [start, end, type] of items.sort((a, b) => a[0] - b[0])) tokens.push(n, start, end - start, type, 0);
       }
       return tokens.build();
@@ -315,8 +330,8 @@ function activate(context) {
   }, legend));
 
   // IntelliSense: def phrases (with tab stops for their arguments), variables,
-  // statements, flags after `def`, names after `use`, and in Python bodies what
-  // `self` and the helpers give (lib.completionsAt)
+  // statements, flags in the brackets after a language, an entry's fields, names after
+  // `use`, and in Python bodies what `self` and the helpers give (lib.completionsAt)
   const KINDS = {
     statement: vscode.CompletionItemKind.Keyword, phrase: vscode.CompletionItemKind.Function,
     follow: vscode.CompletionItemKind.Operator, variable: vscode.CompletionItemKind.Variable,
@@ -328,13 +343,12 @@ function activate(context) {
       const all = await indexes(document);
       const current = all.find(i => i.file === document.uri.fsPath);
       if (!current) return [];
-      const languages = new Set(['python', ...all.flatMap(i => i.languageLines.map(l => l.name))]);
       const language = lib.bodyLanguageAt(current, position.line);
       // in def-lang, the extra trigger characters (for HTML and CSS) open nothing
       if (!language && completion.triggerCharacter && completion.triggerCharacter !== '.') return [];
-      const theirs = language ? await embeddedCompletions(document, position, language, completion.triggerCharacter) : [];
+      const theirs = language ? await embeddedCompletions(document, position, language, completion.triggerCharacter, current) : [];
       if (language && language !== 'python') return theirs;
-      return theirs.concat(lib.completionsAt(current, position.line, position.character, all, languages).map(found => {
+      return theirs.concat(lib.completionsAt(current, position.line, position.character, all, kernel).map(found => {
         const made = new vscode.CompletionItem(found.label, KINDS[found.kind]);
         made.insertText = new vscode.SnippetString(found.insert);
         made.filterText = found.filter;
@@ -349,15 +363,14 @@ function activate(context) {
 
   // Format Document (Shift+Alt+F, or on save with editor.formatOnSave): layout only
   // (lib.formatText), and each body in another language by VS Code's formatter for that
-  // language (def-lang.formatBodies). The languages come from every file, like the colours.
+  // language (def-lang.formatBodies). The languages come from every file, like the colors.
   context.subscriptions.push(vscode.languages.registerDocumentFormattingEditProvider(selector, {
     provideDocumentFormattingEdits: logged('format', async document => {
       const all = await indexes(document);
-      const languages = new Set(['python', ...all.flatMap(i => i.languageLines.map(l => l.name))]);
       const text = document.getText();
       const formatted = vscode.workspace.getConfiguration('def-lang').get('formatBodies', true)
-        ? await lib.formatTextWith(text, languages, formatBody)
-        : lib.formatText(text, languages);
+        ? await lib.formatTextWith(text, kernel, formatBody)
+        : lib.formatText(text, kernel);
       if (formatted === text) return [];
       const whole = new vscode.Range(document.positionAt(0), document.positionAt(text.length));
       return [vscode.TextEdit.replace(whole, formatted)];
@@ -869,8 +882,10 @@ async function checkForUpdates(context, asked) {
 
 // ---- formatting a body in another language with VS Code's own formatter for it
 
-// def-lang's language names -> VS Code's language ids (the same as the colouring grammar's)
+// def-lang's language names -> VS Code's language ids (the same as the coloring grammar's),
+// when a language's entry has no `editor` field
 const LANGUAGE_IDS = { js: 'javascript', shell: 'shellscript', bash: 'shellscript' };
+const languageId = language => (kernel && kernel.editors.get(language)) || LANGUAGE_IDS[language] || language;
 // ... and the file extension that gives a body document its language
 const EXTENSIONS = { html: 'html', css: 'css', javascript: 'js', js: 'js', json: 'json', python: 'py', sql: 'sql',
   markdown: 'md', yaml: 'yaml', shell: 'sh', bash: 'sh' };
@@ -890,8 +905,8 @@ function serveBodies(context) {
 // The body's text formatted by the formatter VS Code has for its language, from column 0;
 // null when there is none, or it changed nothing.
 async function formatBody(language, text, indent) {
-  const id = LANGUAGE_IDS[language] || language;
-  const path = `/${++bodyCount}.${EXTENSIONS[language] || 'txt'}`;
+  const id = languageId(language);
+  const path = `/${++bodyCount}.${EXTENSIONS[language] || EXTENSIONS[id] || 'txt'}`;
   bodies.set(path, text);
   try {
     let document = await vscode.workspace.openTextDocument(vscode.Uri.from({ scheme: BODY_SCHEME, path }));
@@ -914,16 +929,17 @@ async function formatBody(language, text, indent) {
 // the whole file with everything outside the body as spaces, so every position is the
 // same, and that language's providers are asked there.
 
-async function embeddedDocument(document, position, language) {
+async function embeddedDocument(document, position, language, index) {
   const lines = document.getText().split(/\r?\n/);
-  const inBody = n => n >= 0 && n < lines.length && (/^\s/.test(lines[n]) || !lines[n].trim());
+  // the body's own lines (not an entry's fields, above its `does`)
+  const inBody = n => n >= 0 && n < lines.length && (index.pythonLines.has(n) || !lines[n].trim());
   let start = position.line, end = position.line;
-  while (inBody(start - 1) && !/^\S/.test(lines[start - 1])) start--;
+  while (inBody(start - 1)) start--;
   while (inBody(end + 1)) end++;
   const content = lines.map((line, n) => (n >= start && n <= end ? line : ' '.repeat(line.length))).join('\n');
-  const path = `/${++bodyCount}.${EXTENSIONS[language] || 'txt'}`;
+  const id = languageId(language);
+  const path = `/${++bodyCount}.${EXTENSIONS[language] || EXTENSIONS[id] || 'txt'}`;
   bodies.set(path, content);
-  const id = LANGUAGE_IDS[language] || language;
   let embedded = await vscode.workspace.openTextDocument(vscode.Uri.from({ scheme: BODY_SCHEME, path }));
   if (embedded.languageId !== id) embedded = await vscode.languages.setTextDocumentLanguage(embedded, id);
   return { embedded, done: () => bodies.delete(path) };
@@ -934,7 +950,7 @@ async function embeddedHover(document, position) {
   const current = all.find(i => i.file === document.uri.fsPath);
   const language = current && lib.bodyLanguageAt(current, position.line);
   if (!language) return undefined;
-  const { embedded, done } = await embeddedDocument(document, position, language);
+  const { embedded, done } = await embeddedDocument(document, position, language, current);
   try {
     const hovers = await vscode.commands.executeCommand('vscode.executeHoverProvider', embedded.uri, position);
     if (!hovers || !hovers.length) return undefined;
@@ -944,8 +960,8 @@ async function embeddedHover(document, position) {
   }
 }
 
-async function embeddedCompletions(document, position, language, trigger) {
-  const { embedded, done } = await embeddedDocument(document, position, language);
+async function embeddedCompletions(document, position, language, trigger, index) {
+  const { embedded, done } = await embeddedDocument(document, position, language, index);
   try {
     const list = await vscode.commands.executeCommand('vscode.executeCompletionItemProvider', embedded.uri, position, trigger);
     return list ? list.items : [];

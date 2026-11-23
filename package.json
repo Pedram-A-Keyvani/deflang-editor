@@ -2,7 +2,7 @@
   "name": "def-lang",
   "displayName": "def-lang",
   "description": "The def-lang language: run .def programs, install libraries, and colours, Ctrl+click and hover for phrases, variables and imports",
-  "version": "0.36.1",
+  "version": "0.37.0",
   "publisher": "def-lang",
   "license": "MIT",
   "engines": {
@@ -77,7 +77,8 @@
               "keyword.control.means.def",
               "keyword.control.loop.def",
               "keyword.control.question.def",
-              "keyword.control.error.def"
+              "keyword.control.error.def",
+              "keyword.control.field.def"
             ],
             "settings": {
               "foreground": "#88A9D8"
@@ -109,6 +110,15 @@
             ],
             "settings": {
               "foreground": "#DCE1E8"
+            }
+          },
+          {
+            "scope": [
+              "entity.name.type.def"
+            ],
+            "settings": {
+              "foreground": "#DCE1E8",
+              "fontStyle": "bold"
             }
           },
           {
@@ -198,7 +208,8 @@
                 "keyword.control.means.def",
                 "keyword.control.loop.def",
                 "keyword.control.question.def",
-                "keyword.control.error.def"
+                "keyword.control.error.def",
+                "keyword.control.field.def"
               ],
               "settings": {
                 "foreground": "#2E5A9C"
@@ -230,6 +241,15 @@
               ],
               "settings": {
                 "foreground": "#2E3440"
+              }
+            },
+            {
+              "scope": [
+                "entity.name.type.def"
+              ],
+              "settings": {
+                "foreground": "#2E3440",
+                "fontStyle": "bold"
               }
             },
             {
@@ -306,12 +326,14 @@
       "editor.semanticTokenColorCustomizations": {
         "rules": {
           "function:def-lang": "#DCE1E8",
-          "variable:def-lang": "#E8C27A"
+          "variable:def-lang": "#E8C27A",
+          "keyword:def-lang": "#88A9D8"
         },
         "[*Light*]": {
           "rules": {
             "function:def-lang": "#2E3440",
-            "variable:def-lang": "#8A6210"
+            "variable:def-lang": "#8A6210",
+            "keyword:def-lang": "#2E5A9C"
           }
         }
       }
@@ -322,13 +344,13 @@
         "def-lang.underline.wordColor": {
           "type": "string",
           "default": "",
-          "description": "Colour of the hover underline under a def's fixed words, as #rrggbb (in settings.json, click its colour box to pick one). A theme colour id (like charts.blue) works too. Empty: the palette's steel blue, for light and dark themes.",
+          "description": "Colour of the hover underline under a def's fixed words: a theme colour id (like charts.blue) or a #rrggbb colour. Empty: the palette's steel blue, for light and dark themes.",
           "format": "color-hex"
         },
         "def-lang.underline.argumentColor": {
           "type": "string",
           "default": "",
-          "description": "Colour of the hover underline under the parts that fill a def's arguments, as #rrggbb (in settings.json, click its colour box to pick one). A theme colour id (like charts.blue) works too. Empty: the palette's gold dashes, for light and dark themes.",
+          "description": "Colour of the hover underline under the parts that fill a def's arguments: a theme colour id (like charts.yellow) or a #rrggbb colour. Empty: the palette's gold dashes, for light and dark themes.",
           "format": "color-hex"
         },
         "def-lang.python": {

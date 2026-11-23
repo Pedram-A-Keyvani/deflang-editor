@@ -3,10 +3,10 @@ import json
 import re
 from pathlib import Path
 
-# Languages the editor can colour. def-lang itself learns languages from
-# `language NAME` lines, so any other declared language works too; its body just
-# isn't coloured until it is added here.
-LANGUAGES = {  # flag word -> (VS Code grammar scope, VS Code language id)
+# Languages the editor can color. def-lang itself learns languages from their
+# entries (`language css`), so any other declared language works too; its body just
+# isn't colored until it is added here.
+LANGUAGES = {  # language word -> (VS Code grammar scope, VS Code language id)
     "python": ("source.python", "python"),
     "html": ("text.html.basic", "html"),
     "css": ("source.css", "css"),
@@ -19,7 +19,9 @@ LANGUAGES = {  # flag word -> (VS Code grammar scope, VS Code language id)
     "bash": ("source.shell", "shellscript"),
     "yaml": ("source.yaml", "yaml"),
 }
-FLAG = r"(?:as\s+written|regex|" + "|".join(LANGUAGES) + ")"
+# the modifiers of the modifier library, in front of a definition (`internal def ...`)
+# or a name (`shared visits is 0`); the extension colors the ones other libraries declare
+MODIFIERS = r"(?:(?:internal|shared)\s+)*"
 NUMBER_WORDS = ("zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen "
                 "fifteen sixteen seventeen eighteen nineteen twenty thirty forty fifty sixty seventy "
                 "eighty ninety hundred thousand million billion").split()
@@ -29,8 +31,8 @@ OPERATOR_WORDS = sorted([
     "less than or equal to", "is greater than", "greater than", "is less than", "less than",
     "is equal to", "equal to", "plus", "minus", "divided by", "multiplied by",
 ], key=len, reverse=True)
-# Library phrases (say, sum of, home page, ...) are coloured by the extension from the
-# real defs (semantic colours), so they aren't listed here.
+# Library phrases (say, sum of, home page, ...) are colored by the extension from the
+# real defs (semantic colors), so they aren't listed here.
 
 
 def words(items):
@@ -48,17 +50,26 @@ VIEW_TAG = {
 }
 
 
+DEFINITION_CAPTURES = {
+    "1": {"patterns": [{"include": "#modifiers"}]},
+    "2": {"name": "storage.type.def.def"},
+    "3": {"patterns": [{"include": "#flags"}]},
+    "4": {"patterns": [{"include": "#pattern"}]},
+}
+
+
+def definition(language):
+    """[modifiers] language[flags] pattern"""
+    return rf"^({MODIFIERS})({language})(\[[^\]]*\])?\s+(.*)$"
+
+
 def body_rule(name, scope):
-    """def ... NAME ...: the indented body below is written in that language."""
+    """NAME[flags] pattern: the indented body below is written in that language."""
     inner = ([VIEW_TAG] if name == "html" else []) + [{"include": scope}]
     return {
         "name": f"meta.def.{name}.def",
-        "begin": rf"^(def)\s+(?=(?:{FLAG}\s+)*{name}\s)((?:{FLAG}\s+)+)(.*)$",
-        "beginCaptures": {
-            "1": {"name": "storage.type.def.def"},
-            "2": {"patterns": [{"include": "#flags"}]},
-            "3": {"patterns": [{"include": "#pattern"}]},
-        },
+        "begin": definition(name),
+        "beginCaptures": DEFINITION_CAPTURES,
         "end": r"^(?=\S)",
         "patterns": [{"name": f"meta.embedded.block.{name}", "begin": r"^(?=[ \t])", "end": r"^(?=\S)", "patterns": inner}],
     }
@@ -70,8 +81,8 @@ grammar = {
     "scopeName": "source.def",
     "patterns": [
         # no comment rule: a file's comment marker can change (`comment is #`), so
-        # comments are coloured by the extension, which knows the marker of each line
-        {"include": "#language-line"},
+        # comments are colored by the extension, which knows the marker of each line
+        {"include": "#entry"},
         *[{"include": f"#{name}-def"} for name in LANGUAGES],
         {"include": "#def"},
         {"include": "#statement"},
@@ -80,32 +91,50 @@ grammar = {
         {"include": "#expression"},
     ],
     "repository": {
-        # language NAME: its indented body is the Python that runs that language
-        "language-line": {
-            "name": "meta.language.def",
-            "begin": r"^(language)\s+(\w+)\s*$",
-            "beginCaptures": {"1": {"name": "storage.type.def.def"}, "2": {"name": "storage.modifier.def"}},
+        # an entry: `language css`, `modifier shared`, ...; its fields one level in, and
+        # the Python of its `does` one level deeper
+        "entry": {
+            "name": "meta.entry.def",
+            "begin": r"^(language|flag|modifier|statement)\s+([\w-]+)\s*$",
+            "beginCaptures": {"1": {"name": "storage.type.def.def"}, "2": {"name": "entity.name.type.def"}},
             "end": r"^(?=\S)",
-            "patterns": [{"name": "meta.embedded.block.python", "begin": r"^(?=[ \t])", "end": r"^(?=\S)",
-                          "patterns": [{"include": "source.python"}]}],
+            "patterns": [
+                {
+                    "begin": r"^([ \t]+)(does)\s*$",
+                    "beginCaptures": {"2": {"name": "keyword.control.field.def"}},
+                    # \1: the width of `does`; its Python ends at a line that isn't deeper
+                    "end": r"^(?!\1[ \t]+\S)(?=[ \t]*\S)",
+                    "contentName": "meta.embedded.block.python",
+                    "patterns": [{"include": "source.python"}],
+                },
+                {
+                    "match": r"^[ \t]+(words)\s+(.*)$",
+                    "captures": {"1": {"name": "keyword.control.field.def"}, "2": {"patterns": [{"include": "#pattern"}]}},
+                },
+                {
+                    "match": r"^[ \t]+(applies\s+to)\s+(.*)$",
+                    "captures": {"1": {"name": "keyword.control.field.def"}, "2": {"name": "constant.language.def"}},
+                },
+                {
+                    "match": r"^[ \t]+(flags|editor|takes)\s+(.*)$",
+                    "captures": {"1": {"name": "keyword.control.field.def"}, "2": {"patterns": [{"include": "#flags"}]}},
+                },
+            ],
         },
         **{f"{name}-def": body_rule(name, scope) for name, (scope, _) in LANGUAGES.items()},
 
-        # def ... : the indented body below is def-lang (handled by the top-level patterns)
-        "def": {
-            "match": rf"^(def)\s+((?:{FLAG}\s+)*)(.*)$",
-            "captures": {
-                "1": {"name": "storage.type.def.def"},
-                "2": {"patterns": [{"include": "#flags"}]},
-                "3": {"patterns": [{"include": "#pattern"}]},
-            },
-        },
+        # def[flags] pattern: the indented body below is def-lang (handled by the top-level patterns)
+        "def": {"match": definition("def"), "captures": DEFINITION_CAPTURES},
 
-        # each flag on a def line; `as written` has its own colour
+        "modifiers": {"patterns": [{"name": "keyword.control.def", "match": r"[\w-]+"}]},
+
+        # the flags in brackets after a language (`[written, cache 60]`); `written` has its own color
         "flags": {
             "patterns": [
-                {"name": "storage.modifier.as-written.def", "match": r"as\s+written"},
-                {"name": "storage.modifier.def", "match": r"regex|" + "|".join(LANGUAGES)},
+                {"name": "punctuation.section.brackets.def", "match": r"[\[\],]"},
+                {"name": "storage.modifier.as-written.def", "match": r"\bwritten\b"},
+                {"name": "constant.numeric.def", "match": r"(?<![\w.])\d+(?:\.\d+)?\b"},
+                {"name": "storage.modifier.def", "match": r"[\w-]+"},
             ]
         },
 
@@ -159,7 +188,7 @@ grammar = {
 
         # greater than means >
         "means": {
-            "match": r"^(?!def\s|use\s|comment\s|argument\s|error\s)(\S.*?)\s+(means)\s+(.*)$",
+            "match": r"^(?!def[\s\[]|use\s|comment\s|argument\s|error\s)(\S.*?)\s+(means)\s+(.*)$",
             "captures": {
                 "1": {"name": "entity.name.function.def"},
                 "2": {"name": "keyword.control.means.def"},
@@ -209,7 +238,8 @@ def check(node):
     if isinstance(node, dict):
         for key in ("match", "begin", "end"):
             if key in node:
-                re.compile(node[key])
+                # an `end` may name what its `begin` captured (\1), which Python's re can't
+                re.compile(re.sub(r"\\\d", "x", node[key]) if key == "end" else node[key])
         for value in node.values():
             check(value)
     elif isinstance(node, list):
@@ -223,7 +253,7 @@ package_path = Path(__file__).parent / "package.json"
 package = json.loads(package_path.read_text())
 package["contributes"]["grammars"][0]["embeddedLanguages"] = {
     f"meta.embedded.block.{name}": language for name, (_, language) in LANGUAGES.items()}
-package_path.write_text(json.dumps(package, indent=2) + "\n")
+package_path.write_text(json.dumps(package, indent=2, ensure_ascii=False) + "\n")
 
 path = Path(__file__).parent / "syntaxes" / "def.tmLanguage.json"
 path.write_text(json.dumps(grammar, indent=2) + "\n")

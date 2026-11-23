@@ -63,10 +63,12 @@ UNDERLINE = {
 SCOPES = [
     (["storage.type.def.def", "keyword.control.import.def"], "keyword", "bold"),
     (["keyword.control.def", "keyword.control.means.def", "keyword.control.loop.def", "keyword.control.question.def",
-      "keyword.control.error.def"], "keyword", ""),
+      "keyword.control.error.def", "keyword.control.field.def"], "keyword", ""),
     (["keyword.other.def", "keyword.other.logical.def", "keyword.other.operator.def"], "word", ""),
     (["storage.modifier.def", "storage.modifier.as-written.def"], "flag", "italic"),
     (["entity.name.function.def"], "phrase", ""),
+    # an entry's name (`language css`, `modifier shared`): a declared name
+    (["entity.name.type.def"], "phrase", "bold"),
     (["variable.parameter.def"], "variable", "italic"),
     (["string.quoted.double.def", "punctuation.definition.string.begin.def", "punctuation.definition.string.end.def",
       "entity.name.namespace.def"], "string", ""),
@@ -118,10 +120,12 @@ if __name__ == "__main__":
         "textMateRules": rules(PALETTES["dark"]),
         "[*Light*]": {"textMateRules": rules(PALETTES["light"])},
     }
+    # phrases, variables, and the modifiers a library declares (colored like `shared`)
+    semantic = lambda palette: {"function:def-lang": palette["phrase"], "variable:def-lang": palette["variable"],
+                                "keyword:def-lang": palette["keyword"]}
     defaults["editor.semanticTokenColorCustomizations"] = {
-        "rules": {"function:def-lang": PALETTES["dark"]["phrase"], "variable:def-lang": PALETTES["dark"]["variable"]},
-        "[*Light*]": {"rules": {"function:def-lang": PALETTES["light"]["phrase"],
-                                "variable:def-lang": PALETTES["light"]["variable"]}},
+        "rules": semantic(PALETTES["dark"]),
+        "[*Light*]": {"rules": semantic(PALETTES["light"])},
     }
     package["contributes"].pop("defLangUnderline", None)
     props = package["contributes"]["configuration"]["properties"]
@@ -133,6 +137,6 @@ if __name__ == "__main__":
     props["def-lang.underline.argumentColor"]["description"] = (
         "Colour of the hover underline under the parts that fill a def's arguments: a theme colour id "
         "(like charts.yellow) or a #rrggbb colour. Empty: the palette's gold dashes, for light and dark themes.")
-    path.write_text(json.dumps(package, indent=2) + "\n")
+    path.write_text(json.dumps(package, indent=2, ensure_ascii=False) + "\n")
     (Path(__file__).parent / "palette.json").write_text(json.dumps({"underline": UNDERLINE}, indent=2) + "\n")
     print("wrote", path, "and palette.json")
