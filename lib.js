@@ -116,6 +116,8 @@ function indexText(file, text, languages = languageNames([text])) {
     if (/^\s/.test(line) && line.trim()) {
       if (inPython) pythonLines.add(number);
       if (inHtml !== null) htmlLines.set(number, inHtml);
+      // like the engine: an indented comment is a comment, except inside a Python/HTML body
+      else if (!inPython && line.trim().startsWith(comment)) commentLines.set(number, comment);
       group = null;
       return;
     }
