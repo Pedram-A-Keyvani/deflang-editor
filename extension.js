@@ -185,6 +185,7 @@ function activate(context) {
   setTimeout(() => setUp(context), 2000);
   log = vscode.window.createOutputChannel('def-lang');
   context.subscriptions.push(log);
+  moveFolderSetting();
   // the palette's colors for light and dark themes (palette.json, from make_palette.py),
   // unless a setting gives one color
   const palette = require('./palette.json').underline;
@@ -503,7 +504,7 @@ function watchErrors(context) {
 }
 
 // ---- running programs and installing libraries, with your own def-lang interpreter
-// (the folder that holds deflang: setting def-lang.folder) and your own Python
+// (the folder that holds deflang: setting def-lang.interpreterFolder) and your own Python
 
 const childProcess = require('child_process');
 const fsNode = require('fs');
@@ -546,12 +547,32 @@ function expandPath(text) {
     .replace(/\$\{(\w+)\}|\$(\w+)/g, (all, a, b) => (a || b) === 'HOME' ? home : (process.env[a || b] ?? all));
 }
 
-// The folder that holds deflang: the def-lang.folder setting, else the folder of the
-// `def-lang` alias; empty: deflang is installed (pip, pipx).
+// The folder that holds deflang: the def-lang.interpreterFolder setting (or the old
+// def-lang.folder, until it has moved), else the folder of the `def-lang` alias; empty:
+// deflang is installed (pip, pipx).
 function deflangFolder() {
-  const chosen = vscode.workspace.getConfiguration('def-lang').get('folder') || '';
+  const config = vscode.workspace.getConfiguration('def-lang');
+  const chosen = config.get('interpreterFolder') || config.get('folder') || '';
   if (chosen) return expandPath(chosen);
   return (fromAlias() || {}).folder || '';
+}
+
+// def-lang.folder is now def-lang.interpreterFolder (0.39.0): its value moves over, in
+// the same place (user or workspace settings), and the old one is removed.
+async function moveFolderSetting() {
+  const config = vscode.workspace.getConfiguration('def-lang');
+  const old = config.inspect('folder') || {};
+  const now = config.inspect('interpreterFolder') || {};
+  for (const [key, target] of [['globalValue', vscode.ConfigurationTarget.Global], ['workspaceValue', vscode.ConfigurationTarget.Workspace]]) {
+    if (old[key] === undefined) continue;
+    try {
+      if (now[key] === undefined) await config.update('interpreterFolder', old[key], target);
+      await config.update('folder', undefined, target);
+      log.appendLine(`def-lang.folder moved to def-lang.interpreterFolder: ${old[key]}`);
+    } catch (error) {
+      log.appendLine(`def-lang.folder couldn't be moved: ${error.message}`);
+    }
+  }
 }
 
 // The environment that runs `python -m deflang`: that folder on PYTHONPATH.
@@ -581,7 +602,7 @@ function pythonIsReady() {
       : 'The def-lang interpreter isn\'t installed.', install, choose, setting).then(choice => {
       if (choice === install) vscode.commands.executeCommand('def-lang.installInterpreter');
       else if (choice === choose) chooseInterpreterFolder();
-      else if (choice === setting) vscode.commands.executeCommand('workbench.action.openSettings', 'def-lang.folder');
+      else if (choice === setting) vscode.commands.executeCommand('workbench.action.openSettings', 'def-lang.interpreterFolder');
     });
     return false;
   }
@@ -589,7 +610,7 @@ function pythonIsReady() {
 }
 
 // ---- installing the interpreter: git clone (or GitHub's zip, without git), then
-// def-lang.folder, and if you want the `def-lang` alias in your shell's startup file
+// def-lang.interpreterFolder, and if you want the `def-lang` alias in your shell's startup file
 
 const DEFLANG_REPO = 'https://github.com/Pedram-A-Keyvani/deflang.git';
 const DEFLANG_ZIP = 'https://github.com/Pedram-A-Keyvani/deflang/archive/refs/heads/main.zip';
@@ -617,7 +638,7 @@ function runQuietly(command, args, options = {}) {
 
 const hasGit = () => !childProcess.spawnSync('git', ['--version']).error;
 
-// `I have it`: the user picks their deflang folder; def-lang.folder becomes the folder that holds it.
+// `I have it`: the user picks their deflang folder; def-lang.interpreterFolder becomes the folder that holds it.
 async function chooseInterpreterFolder() {
   const picked = await vscode.window.showOpenDialog({ canSelectFolders: true, canSelectFiles: false, openLabel: 'This is the deflang folder' });
   if (!picked || !picked.length) return;
@@ -679,7 +700,7 @@ async function installInterpreter() {
 
 // Setting up, at the first start and whenever the interpreter isn't found: find it (the
 // setting, the alias, or an installed deflang); if it's found in a folder, fill in
-// def-lang.folder and add the `def-lang` alias to the shell's startup file, without asking.
+// def-lang.interpreterFolder and add the `def-lang` alias to the shell's startup file, without asking.
 // If it isn't found, say so once, with Install and "I have it".
 async function setUp(context) {
   const python = pythonCommand();
@@ -703,16 +724,16 @@ function shouldAskSetUp(dontAskVersion, version) {
   return dontAskVersion !== version;
 }
 
-// The interpreter is in FOLDER/deflang: def-lang.folder says so (if it's empty), and
+// The interpreter is in FOLDER/deflang: def-lang.interpreterFolder says so (if it's empty), and
 // the `def-lang` alias is added if there is none. One message for what changed.
 async function finishSetUp(folder, announce) {
   const home = require('os').homedir();
   const done = [];
   const config = vscode.workspace.getConfiguration('def-lang');
   const shown = folder.startsWith(home + pathNode.sep) ? '~' + folder.slice(home.length) : folder;
-  if (announce || !config.get('folder')) {
-    if (config.get('folder') !== shown) {
-      await config.update('folder', shown, vscode.ConfigurationTarget.Global);
+  if (announce || !config.get('interpreterFolder')) {
+    if (config.get('interpreterFolder') !== shown) {
+      await config.update('interpreterFolder', shown, vscode.ConfigurationTarget.Global);
       done.push(`the interpreter in ${shown}/deflang`);
     }
   }

@@ -2,7 +2,7 @@
 
 This folder is the extension. It needs nothing else to build: the interpreter and the
 libraries are not part of it (the extension runs the user's interpreter, from the
-`def-lang.folder` setting).
+`def-lang.interpreterFolder` setting).
 
 | File | Is |
 |---|---|

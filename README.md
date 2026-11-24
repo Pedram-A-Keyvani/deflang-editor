@@ -45,7 +45,7 @@ or in VS Code: Extensions view → def-lang → **Uninstall**.
 ## Before you start
 
 It runs the def-lang interpreter, with Python 3.11 or newer. When it starts, it looks
-for the interpreter: the `def-lang.folder` setting, your shell's `def-lang` alias, or
+for the interpreter: the `def-lang.interpreterFolder` setting, your shell's `def-lang` alias, or
 an installed deflang. If it doesn't find one, it asks, at every start until it is set
 up (**Not now** waits for the next start; **Don't ask again** lasts until the next
 version of the extension):
@@ -54,7 +54,7 @@ version of the extension):
   you choose), with git or, without git, as a zip.
 - **I have it**: you pick your `deflang` folder.
 
-Then it sets everything up by itself: `def-lang.folder` shows the folder, and the
+Then it sets everything up by itself: `def-lang.interpreterFolder` shows the folder, and the
 `def-lang` command is added to your terminal (one line in `~/.bashrc` or `~/.zshrc`,
 unless a `def-lang` alias is there already). Open a new terminal to use it.
 
@@ -110,7 +110,7 @@ unless a `def-lang` alias is there already). Open a new terminal to use it.
 
 | Setting | Is |
 |---|---|
-| `def-lang.folder` | the folder that holds the interpreter's `deflang` folder, like `~/code`; filled in by the extension when it finds or installs it |
+| `def-lang.interpreterFolder` | the folder that holds the interpreter's `deflang` folder, like `~/code`; not where your programs are: `.def` files anywhere use it. Filled in by the extension when it finds or installs it (it was `def-lang.folder` before 0.39.0, and moves over by itself) |
 | `def-lang.python` | the Python (3.11 or newer) that runs def-lang: `python3` (left at that, the one your `def-lang` alias names; `python` on Windows) |
 | `def-lang.checkForUpdates` | look for a newer def-lang on GitHub once a day (on by default) |
 | `def-lang.formatBodies` | Format Document formats bodies in other languages too (on by default) |
