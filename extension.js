@@ -568,13 +568,35 @@ function watchErrors(context) {
     clearTimeout(timers.get(document.uri.toString()));
     timers.set(document.uri.toString(), setTimeout(() => check(document), 500));
   };
+  // a libraries.toml says where a program's libraries are: when one changes, the open
+  // files are checked again, since what they `use` may be found, or lost, now. The
+  // workspace's, and the ones next to an open file and in its program's folder (a
+  // library outside the workspace, like a global one)
+  const watched = new Set();
+  const again = () => vscode.workspace.textDocuments.forEach(later);
+  const watch = pattern => {
+    const watcher = vscode.workspace.createFileSystemWatcher(pattern);
+    watcher.onDidChange(again);
+    watcher.onDidCreate(again);
+    watcher.onDidDelete(again);
+    context.subscriptions.push(watcher);
+  };
+  watch('**/libraries.toml');
+  const watchNear = document => {
+    if (document.languageId !== 'def-lang' || document.uri.scheme !== 'file') return;
+    for (const folder of [pathNode.dirname(document.uri.fsPath), lib.programFolder(document.uri.fsPath)]) {
+      if (watched.has(folder)) continue;
+      watched.add(folder);
+      watch(new vscode.RelativePattern(folder, 'libraries.toml'));
+    }
+  };
   context.subscriptions.push(
-    vscode.workspace.onDidOpenTextDocument(check),
+    vscode.workspace.onDidOpenTextDocument(document => { watchNear(document); check(document); }),
     vscode.workspace.onDidSaveTextDocument(check),
     vscode.workspace.onDidChangeTextDocument(event => later(event.document)),
     vscode.workspace.onDidCloseTextDocument(document => diagnostics.delete(document.uri)),
   );
-  vscode.workspace.textDocuments.forEach(check);
+  vscode.workspace.textDocuments.forEach(document => { watchNear(document); check(document); });
 }
 
 // ---- running programs and installing libraries, with your own def-lang interpreter

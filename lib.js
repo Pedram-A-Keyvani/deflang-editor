@@ -62,7 +62,8 @@ function readEntries(text, kernel) {
     const body = entry.body.join('\n');
     if (entry.kind === 'flag' || entry.kind === 'modifier') {
       const kind = entry.kind === 'flag' ? 'Flags' : 'Modifiers';
-      if (/set\s+arguments\s+to\s+as\s+written|\.read_argument\s*=\s*lambda\s+(\w+)\s*,\s*\w+\s*:\s*\1\b/.test(body)) kernel['words' + kind].add(entry.name);
+      // its arguments are words: as written, or lines kept to run later (`set arguments to kept`)
+      if (/set\s+arguments\s+to\s+(?:as\s+written|kept)|\.read_argument\s*=\s*lambda\s+(\w+)\s*,\s*\w+\s*:\s*(?:Line\(\s*)?\1\b/.test(body)) kernel['words' + kind].add(entry.name);
       if (/set\s+pattern\s+to\s+regex|\.read_pattern\s*=/.test(body)) kernel['regex' + kind].add(entry.name);
       if (/set\s+seen\s+by\s+to\s+the\s+file|\.seen_by\s*=/.test(body)) kernel['hiding' + kind].add(entry.name);
     }
@@ -277,8 +278,11 @@ function readableToRegex(text, argumentName) {
     }
     let end = pos;
     while (end < text.length && !/\s/.test(text[end])) end++;
-    const word = text.slice(pos, end);
+    let word = text.slice(pos, end);
     pos = end;
+    // an argument with a symbol right after it, like `A1,` in `A0 and A1, as A2`: the symbol is the next word
+    const trailing = new RegExp('^(' + escapeRegex(argumentName) + '\\d+)([^\\p{L}\\p{N}_\\s"]+)$', 'u').exec(word);
+    if (trailing) { word = trailing[1]; pos = end - trailing[2].length; }
     if (argument.test(word)) tokens.push([false, group(/\d+$/.exec(word)[0], '[\\s\\S]+'), true, 'any']);
     // "A0": a text stands there (strings are masked as \u0001)
     else if (word.length > 2 && word[0] === '"' && word[word.length - 1] === '"' && argument.test(word.slice(1, -1))) tokens.push([true, group(/\d+(?="$)/.exec(word)[0], '\u0001+'), true, 'text']);

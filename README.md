@@ -97,7 +97,8 @@ unless a `def-lang` alias is there already). Open a new terminal to use it.
   `use`, and in a Python body what `self.` and `self["` give.
 - **Errors** are underlined in red as you type: unknown names, files that can't be
   found, a missing closing quote, a Python syntax error, and more. They come from the
-  interpreter, which reads the program without running it.
+  interpreter, which reads the program without running it. When a `libraries.toml`
+  changes, the open files are checked again: a library may be found, or gone, now.
 - **Format Document** (Shift+Alt+F, or on save with `editor.formatOnSave`): tidies the
   layout, never what a line means. Indentation in spaces, one space between words
   (quoted text and comments as they are), no trailing spaces, no runs of empty lines.
