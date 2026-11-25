@@ -86,7 +86,9 @@ unless a `def-lang` alias is there already). Open a new terminal to use it.
   description: the comment lines right above it. They also work on variables, on the
   file after `use`, on a library's statements, and on the language, flags and
   modifiers of a definition line (`internal css[…]`): they lead to the entry that
-  declares them, with its comment lines as its help.
+  declares them, with its comment lines as its help. Where two files define the same
+  phrase, they show the one in the line's scope (`in the scope of web/http`), as the
+  interpreter reads it; the files named there lead to their files.
 - **Underlines** on hover show how a line is read: a def's fixed words solid, the
   parts that fill its arguments dashed.
 - **IntelliSense** offers the phrases a file's program can see, with Tab between the

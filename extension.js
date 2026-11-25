@@ -148,10 +148,12 @@ async function lookup(document, position) {
   const range = (start, end) => new vscode.Range(position.line, shift + start, position.line, shift + end);
   // only the defs of the files this file's program uses, like the engine
   const visible = lib.visibleIndexes(document.uri.fsPath, all);
-  const hits = lib.findDefinitions(text, position.character - shift, visible);
+  // where files define the same phrase: the one in the line's scope (`in the scope of …`)
+  const scope = lib.scopeAt(current, position.line);
+  const hits = lib.findDefinitions(text, position.character - shift, visible, scope);
   if (hits.length) {
     const order = lib.defOrder(lib.orderStarts(document.uri.fsPath), all);
-    const structure = lib.structureAt(text, position.character - shift, visible, order);
+    const structure = lib.structureAt(text, position.character - shift, visible, order, scope);
     const spans = list => list.map(([start, end]) => range(start, end));
     return {
       all, hits, range: range(...hits[0].range),
@@ -168,7 +170,7 @@ async function lookup(document, position) {
   }
   // words that fill a phrase's argument, and are no phrase or variable themselves
   // (`arguments` in `set arguments to as written`): that phrase, about those words
-  const inside = lib.argumentAt(text, position.character - shift, visible, lib.defOrder(lib.orderStarts(document.uri.fsPath), all));
+  const inside = lib.argumentAt(text, position.character - shift, visible, lib.defOrder(lib.orderStarts(document.uri.fsPath), all), scope);
   if (!inside) return null;
   const spans = list => list.map(([start, end]) => range(start, end));
   return {
@@ -471,7 +473,7 @@ function activate(context) {
     provideDocumentLinks(document) {
       const links = [];
       for (let n = 0; n < document.lineCount; n++) {
-        for (const [start, end, target] of lib.findLinks(document.lineAt(n).text, document.uri.fsPath)) {
+        for (const [start, end, target] of lib.findLinks(document.lineAt(n).text, document.uri.fsPath, kernel)) {
           links.push(new vscode.DocumentLink(new vscode.Range(n, start, n, end), vscode.Uri.file(target)));
         }
       }

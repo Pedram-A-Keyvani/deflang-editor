@@ -29,7 +29,8 @@ const doesLanguage = value => ((/^in\s+(\w+)(?:\[[^\]]*\])?$/.exec(value || '') 
 //   regexFlags        the flags that read a pattern as a raw regex (regexModifiers)
 //   hidingFlags       the flags that let only a definition's own file see it (hidingModifiers)
 //   statementEffects  the statements that set the file's comment marker, argument name
-//                     or indent: { words, effects: { comment: N, ... } } (from their `does`)
+//                     or indent, or the scope of the lines under them: { words, effects:
+//                     { comment: N, ... } } (from their `does`)
 //   variableMakers    the definitions that give a variable its value: their argument N
 //                     names it (from their Python, like `def-lang check`)
 //   aliasMakers       the definitions that make an alias (`X means Y`)
@@ -67,8 +68,8 @@ function readEntries(text, kernel) {
     }
     if (entry.kind === 'statement' && entry.words) {
       const effects = {};
-      const names = { 'comment marker': 'comment', 'argument name': 'argument', 'indent': 'indent' };
-      for (const m of body.matchAll(/set\s+(comment\s+marker|argument\s+name|indent)\s+to\s+[\p{L}_]+?(\d+)/gu)) effects[names[m[1].split(/\s+/).join(' ')]] = Number(m[2]);
+      const names = { 'comment marker': 'comment', 'argument name': 'argument', 'indent': 'indent', 'scope': 'scope' };
+      for (const m of body.matchAll(/set\s+(comment\s+marker|argument\s+name|indent|scope)\s+to\s+[\p{L}_]+?(\d+)/gu)) effects[names[m[1].split(/\s+/).join(' ')]] = Number(m[2]);
       for (const m of body.matchAll(/\[\s*["'](comment|argument|indent)["']\s*\]\s*=\s*(?:int\(\s*)?a\[(\d+)\]/g)) effects[m[1]] = Number(m[2]);
       if (Object.keys(effects).length) kernel.statementEffects.push({ name: entry.name, words: entry.words, effects });
     }
@@ -129,9 +130,10 @@ function readMakers(text, kernel) {
 }
 
 // What a statement line sets for its file, by the statements' `does` (kernel.statementEffects):
-// { comment, argument, indent } (the words in those places), or null if it is no such line.
-function statementEffect(line, kernel) {
-  if (!kernel.statementEffects || !line.trim() || /^\s/.test(line)) return null;
+// { comment, argument, indent, scope } (the words in those places, and where they are, in
+// `at`), or null if it is no such line. Only a scope may be set by an indented line.
+function statementEffect(line, kernel, indented = false) {
+  if (!kernel.statementEffects || !line.trim() || (!indented && /^\s/.test(line))) return null;
   const masked = maskStrings(line);
   for (const statement of kernel.statementEffects) {
     if (statement.regex === undefined) {
@@ -141,10 +143,12 @@ function statementEffect(line, kernel) {
     const m = statement.regex && statement.regex.exec(masked);
     if (!m) continue;
     const found = {};
+    Object.defineProperty(found, 'at', { value: {} });
     for (const [effect, n] of Object.entries(statement.effects)) {
       const span = m.indices.groups && m.indices.groups['a' + n];
-      if (span) found[effect] = line.slice(span[0], span[1]).trim();
+      if (span) { found[effect] = line.slice(span[0], span[1]).trim(); found.at[effect] = span; }
     }
+    if (indented && /^\s/.test(line) && !found.scope) return null;
     return found;
   }
   return null;
@@ -434,7 +438,47 @@ function indexText(file, text, kernel = kernelNames([text])) {
       }
     }
   });
-  return { file, defs, lines, pythonLines, htmlLines, languageLines, entries, entryLines, definitionLines, aliasLines, doesLines, commentLines, sequence };
+  // the scope of each line (`in the scope of web/http`): the names a statement's `does`
+  // sets it to, for that line and the lines under it, like the engine
+  const scopes = new Map(); // line -> [names, as `use` names them]
+  const open = [];          // { width, names } of the scope lines still open
+  lines.forEach((line, number) => {
+    if (!line.trim() || pythonLines.has(number) || htmlLines.has(number) || commentLines.has(number)) return;
+    while (open.length && open[open.length - 1].width >= width(line)) open.pop();
+    const effect = statementEffect(line, kernel, true);
+    const own = effect && effect.scope ? effect.scope.split(/\s+and\s+/).map(n => n.trim()).filter(Boolean) : [];
+    const names = [...open.flatMap(o => o.names), ...own];
+    if (names.length) scopes.set(number, names);
+    if (own.length) open.push({ width: width(line), names: own });
+  });
+  return { file, defs, lines, pythonLines, htmlLines, languageLines, entries, entryLines, definitionLines, aliasLines, doesLines, commentLines, sequence, scopes };
+}
+
+// The files and folders a line is in the scope of: each name the way `use` names it (a
+// file), or a library's name (its folder: all its files), like the engine's scope_of.
+function scopeAt(index, n) {
+  const names = index && index.scopes && index.scopes.get(n);
+  return names ? scopePlaces(names, index.file) : null;
+}
+
+function scopePlaces(names, fromFile) {
+  const here = path.dirname(fromFile);
+  const program = programFolder(fromFile);
+  const places = [];
+  for (const name of names) {
+    const local = [here, program].map(d => path.join(d, name + '.def')).find(f => fs.existsSync(f));
+    const folder = !local && !name.includes('/') &&
+      (libraryFolder(program, name) || (fs.existsSync(path.join(here, 'library.toml')) && libraryFolder(here, name)));
+    const place = local || folder || resolveImport(name, fromFile);
+    if (place) places.push(path.resolve(place));
+  }
+  return places;
+}
+
+// Whether a file is in a scope: it is one of its files, or in one of its folders.
+function inScope(file, scope) {
+  const full = path.resolve(file);
+  return scope.some(place => full === place || full.startsWith(place + path.sep));
 }
 
 // Every match of a def on a line, with greedy and with lazy arguments.
@@ -454,8 +498,9 @@ function maskStrings(line) {
 }
 
 // The defs whose fixed words are under the cursor, best first (most fixed words,
-// like the engine's "a longer phrase wins").
-function findDefinitions(line, column, indexes) {
+// like the engine's "a longer phrase wins"). Where files define the same phrase, the
+// ones in `scope` (scopeAt), if any are.
+function findDefinitions(line, column, indexes, scope = null) {
   const masked = maskStrings(line);
   if (masked[column] === '\u0001') return [];
   const hits = [];
@@ -477,12 +522,16 @@ function findDefinitions(line, column, indexes) {
     }
   }
   if (!hits.length) return [];
-  const best = Math.max(...hits.map(h => h.score));
+  const most = Math.max(...hits.map(h => h.score));
+  let best = hits.filter(h => h.score === most);
+  if (scope && new Set(best.map(h => h.file)).size > 1) {
+    const scoped = best.filter(h => inScope(h.file, scope));
+    if (scoped.length) best = scoped;
+  }
   // one result per definition: stacked def lines of one def share a body, so they
   // show once, pointing at the def's first line
   const seen = new Set();
-  return hits
-    .filter(h => h.score === best)
+  return best
     .map(h => ({ ...h, line: h.group ?? h.line }))
     .filter(h => !seen.has(h.file + ':' + h.line) && seen.add(h.file + ':' + h.line));
 }
@@ -639,19 +688,19 @@ function wrapsOnLine(def, start, end, line, inner) {
 // stops at the first phrase that binds looser, like the engine reads the line.
 // The phrase whose argument holds `column`: the words there fill its A0, A1, ...
 // { hit, part: [start, end], structure }, the innermost one, or null.
-function argumentAt(line, column, indexes, order) {
+function argumentAt(line, column, indexes, order, scope = null) {
   let best = null;
   for (const phrase of allPhrases(line, indexes)) {
-    const hit = findDefinitions(line, phrase.start, indexes)[0];
-    const structure = hit && structureAt(line, phrase.start, indexes, order);
+    const hit = findDefinitions(line, phrase.start, indexes, scope)[0];
+    const structure = hit && structureAt(line, phrase.start, indexes, order, scope);
     const part = structure && structure.parts.find(([start, end]) => start <= column && column < end);
     if (part && (!best || part[1] - part[0] < best.part[1] - best.part[0])) best = { hit, part, structure };
   }
   return best;
 }
 
-function structureAt(line, column, indexes, order) {
-  const hit = findDefinitions(line, column, indexes)[0];
+function structureAt(line, column, indexes, order, scope = null) {
+  const hit = findDefinitions(line, column, indexes, scope)[0];
   if (!hit) return null;
   const keywords = hit.spans.map(span => [span[0], span[1]]);
   const parts = [];
@@ -1019,12 +1068,24 @@ function resolveProgramFile(name, fromFile) {
 }
 
 // Clickable file names on a line: [start, end, target]
-function findLinks(line, fromFile) {
+function findLinks(line, fromFile, kernel = null) {
   const links = [];
   let m;
   if ((m = /^(use\s+(?:.+?\s+from\s+)?)(\S+)\s*$/.exec(line))) {
     const target = resolveImport(m[2], fromFile);
     if (target) links.push([m[1].length, m[1].length + m[2].length, target]);
+  }
+  // the files of a scope (`in the scope of web/http and io/audio`): each name leads to its
+  // file (a library's name, to its folder)
+  const effect = kernel && statementEffect(line, kernel, true);
+  if (effect && effect.scope) {
+    const [from] = effect.at.scope;
+    for (const name of effect.scope.matchAll(/\S+/g)) {
+      if (name[0] === 'and') continue;
+      const [place] = scopePlaces([name[0]], fromFile);
+      const start = from + line.slice(from).indexOf(effect.scope) + name.index;
+      if (place && fs.existsSync(place) && fs.statSync(place).isFile()) links.push([start, start + name[0].length, place]);
+    }
   }
   const fileWords = /\b(?:template|assets\s+are\s+in)\s+"([^"]+)"/g;
   while ((m = fileWords.exec(line))) {
@@ -1659,7 +1720,7 @@ function render(parts, formatted) {
 
 module.exports = {
   FLAG_HELP, LANGUAGE_HELP, RESERVED_HELP, isDefLanguage, reservedWordAt, argumentAt, flagAt, statementEffect, argumentTexts, flagWarnings, wrapsOnLine, kernelNames, definitionLine, kernelWordAt, findEntry, entryOn, replacementsOf, statementWordsIn,
-  indexText, findDefinitions, findVariable, findLinks, sourceOf, headerOf, descriptionOf, splitDescription, readableToRegex,
+  indexText, findDefinitions, findVariable, findLinks, scopeAt, scopePlaces, sourceOf, headerOf, descriptionOf, splitDescription, readableToRegex,
   packageFolder, programFolder, libraryFolder, linkedFolders, libraryFoldersOf, listedLibraries, globalFolder, resolveImport, visibleIndexes, templateExpressionAt, wordAt, phrasesIn, defOrder, orderStarts, structureAt,
   completionsAt, defSnippet, patternParts, importNames, formatText, formatTextWith, bodyLanguageAt,
   variableNames, variablesIn, findLanguage, isComment, apiRoutes, viewPaths, htmlReferenceAt, resolveHtmlReference,
