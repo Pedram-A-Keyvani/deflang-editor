@@ -4,38 +4,171 @@
 const fs = require('fs');
 const path = require('path');
 
-// The kernel (deflang/kernel.py): the entries the interpreter has built in. Libraries
-// declare the rest, each kind the same way (`language css`, `modifier shared`, ...).
+// The kernel (deflang/kernel.py): the interpreter has only `python` and `use` built in.
+// Everything else is declared, each kind the same way (`language css`, `modifier shared`,
+// ...), and the editor learns it from the declarations, like the interpreter.
 const KINDS = ['language', 'flag', 'modifier', 'statement'];
-const BUILT_IN = {
-  languages: ['def', 'python'], flags: ['written', 'regex'], modifiers: [],
-  statements: ['use', 'comment', 'argument', 'indent', 'error'],
-};
+const BUILT_IN = { languages: ['python'], flags: [], modifiers: [], statements: ['use'] };
 const ENTRY_LINE = /^(language|flag|modifier|statement)\s+([\w-]+)\s*$/;
-// an entry's field, one level in (`does` and `replaces` are every kind's)
+// an entry's field, one level in (`does in LANGUAGE` and `replaces` are every kind's)
 const FIELDS = {
-  language: ['does', 'editor', 'flags', 'replaces'], flag: ['does', 'takes', 'replaces'],
-  modifier: ['does', 'applies to', 'replaces'], statement: ['does', 'words', 'replaces'],
+  language: ['does', 'editor', 'replaces'], flag: ['does', 'words', 'replaces'],
+  modifier: ['does', 'replaces'], statement: ['does', 'words', 'replaces'],
 };
-const FIELD_LINE = /^\s+(applies\s+to|does|words|flags|editor|takes|replaces)(?:\s+(.*?))?\s*$/;
+const FIELD_LINE = /^\s+(does|words|editor|replaces)(?:\s+(.*?))?\s*$/;
+// the language of a `does in LANGUAGE` field's value, or null
+const doesLanguage = value => ((/^in\s+(\w+)(?:\[[^\]]*\])?$/.exec(value || '') || [])[1]) || null;
 
-// The kernel's names: the built-in entries, those of `base`, and those declared in these
-// texts: { languages, flags, modifiers, statements } (Sets), and editors: a language ->
-// its `editor` field (VS Code's language id).
+// The kernel as the editor knows it: the built-in entries, those of `base`, and what
+// these texts declare, read from the declarations themselves (nothing about a library
+// is written here):
+//   languages, flags, modifiers, statements   the entries' names (Sets)
+//   editors           a language -> its `editor` field (VS Code's language id)
+//   wordsFlags        the flags that keep a definition's arguments' words (and
+//                     wordsModifiers, the modifiers that do)
+//   regexFlags        the flags that read a pattern as a raw regex (regexModifiers)
+//   hidingFlags       the flags that let only a definition's own file see it (hidingModifiers)
+//   statementEffects  the statements that set the file's comment marker, argument name
+//                     or indent: { words, effects: { comment: N, ... } } (from their `does`)
+//   variableMakers    the definitions that give a variable its value: their argument N
+//                     names it (from their Python, like `def-lang check`)
+//   aliasMakers       the definitions that make an alias (`X means Y`)
+//   fixedVariables    variables a definition sets by name (`them`, `it`)
 function kernelNames(texts, base = null) {
-  const kernel = { editors: new Map(base ? base.editors : []) };
+  const kernel = {
+    editors: new Map(base ? base.editors : []),
+    wordsFlags: new Set(base ? base.wordsFlags : []), regexFlags: new Set(base ? base.regexFlags : []),
+    hidingFlags: new Set(base ? base.hidingFlags : []), wordsModifiers: new Set(base ? base.wordsModifiers : []),
+    regexModifiers: new Set(base ? base.regexModifiers : []), hidingModifiers: new Set(base ? base.hidingModifiers : []),
+    statementEffects: base ? [...base.statementEffects] : [],
+    variableMakers: base ? [...base.variableMakers] : [], aliasMakers: base ? [...base.aliasMakers] : [],
+    fixedVariables: new Set(base ? base.fixedVariables : []),
+  };
   for (const kind of KINDS) kernel[kind + 's'] = new Set(base ? base[kind + 's'] : BUILT_IN[kind + 's']);
-  for (const text of texts) {
-    let entry = null;
-    for (const line of text.split(/\r?\n/)) {
-      let m;
-      if ((m = ENTRY_LINE.exec(line))) { entry = m; kernel[m[1] + 's'].add(m[2]); continue; }
-      if (!line.trim()) continue;
-      if (!/^\s/.test(line)) { entry = null; continue; }
-      if (entry && entry[1] === 'language' && (m = /^\s+editor\s+(\S+)\s*$/.exec(line))) kernel.editors.set(entry[2], m[1]);
+  const all = [...texts];
+  for (const text of all) readEntries(text, kernel);
+  for (const text of all) readMakers(text, kernel);
+  return kernel;
+}
+
+// The entries of a text: their names and editors, and what their `does` sets.
+function readEntries(text, kernel) {
+  let entry = null;
+  let does = null;
+  const width = line => line.length - line.trimStart().length;
+  const finish = () => {
+    if (!entry) return;
+    const body = entry.body.join('\n');
+    if (entry.kind === 'flag' || entry.kind === 'modifier') {
+      const kind = entry.kind === 'flag' ? 'Flags' : 'Modifiers';
+      if (/set\s+arguments\s+to\s+as\s+written|\.read_argument\s*=\s*lambda\s+(\w+)\s*,\s*\w+\s*:\s*\1\b/.test(body)) kernel['words' + kind].add(entry.name);
+      if (/set\s+pattern\s+to\s+regex|\.read_pattern\s*=/.test(body)) kernel['regex' + kind].add(entry.name);
+      if (/set\s+seen\s+by\s+to\s+the\s+file|\.seen_by\s*=/.test(body)) kernel['hiding' + kind].add(entry.name);
+    }
+    if (entry.kind === 'statement' && entry.words) {
+      const effects = {};
+      const names = { 'comment marker': 'comment', 'argument name': 'argument', 'indent': 'indent' };
+      for (const m of body.matchAll(/set\s+(comment\s+marker|argument\s+name|indent)\s+to\s+[\p{L}_]+?(\d+)/gu)) effects[names[m[1].split(/\s+/).join(' ')]] = Number(m[2]);
+      for (const m of body.matchAll(/\[\s*["'](comment|argument|indent)["']\s*\]\s*=\s*(?:int\(\s*)?a\[(\d+)\]/g)) effects[m[1]] = Number(m[2]);
+      if (Object.keys(effects).length) kernel.statementEffects.push({ name: entry.name, words: entry.words, effects });
+    }
+  };
+  for (const line of text.split(/\r?\n/)) {
+    let m;
+    if ((m = ENTRY_LINE.exec(line))) {
+      finish();
+      entry = { kind: m[1], name: m[2], body: [], words: null };
+      does = null;
+      kernel[m[1] + 's'].add(m[2]);
+      continue;
+    }
+    if (!line.trim()) continue;
+    if (!/^\s/.test(line)) { finish(); entry = null; continue; }
+    if (!entry) continue;
+    if (does !== null && width(line) > does) { entry.body.push(line); continue; }
+    does = null;
+    if (entry.kind === 'language' && (m = /^\s+editor\s+(\S+)\s*$/.exec(line))) kernel.editors.set(entry.name, m[1]);
+    if ((m = /^\s+words\s+(.+?)\s*$/.exec(line))) entry.words = m[1];
+    if (/^\s+does\b/.test(line)) does = width(line);
+  }
+  finish();
+}
+
+// The definitions of a text that make variables or aliases: their Python stores into
+// self["variables"][...] or self["aliases"][...] with an argument (like `check`).
+function readMakers(text, kernel) {
+  const lines = text.split(/\r?\n/);
+  let argumentName = 'A';
+  for (let n = 0; n < lines.length; n++) {
+    const effect = statementEffect(lines[n], kernel);
+    if (effect && effect.argument) argumentName = effect.argument;
+    const first = definitionLine(lines[n], kernel);
+    if (!first) continue;
+    const group = [first];
+    while (n + 1 < lines.length && definitionLine(lines[n + 1], kernel)) group.push(definitionLine(lines[++n], kernel));
+    const body = [];
+    while (n + 1 < lines.length && (/^\s/.test(lines[n + 1]) || !lines[n + 1].trim())) body.push(lines[++n]);
+    if (first.language !== 'python') continue;
+    const code = body.join('\n');
+    const argument = new RegExp('(?<![\\p{L}\\p{N}_])' + escapeRegex(argumentName) + '(\\d+)(?![\\p{L}\\p{N}_])', 'gu');
+    const used = (pattern) => [...code.matchAll(pattern)].flatMap(m => [...m[1].matchAll(argument)].map(a => Number(a[1])));
+    const variables = used(/self\[\s*["']variables["']\s*\]\s*(?:\[|\.setdefault\(|\.get\()([^\]\),]*)/g);
+    const aliases = used(/self\[\s*["']aliases["']\s*\]\s*\[([^\]]*)\]/g);
+    for (const m of code.matchAll(/self\[\s*["']variables["']\s*\]\s*\[\s*["']([\p{L}\p{N}_]+)["']\s*\]/gu)) kernel.fixedVariables.add(m[1]);
+    if (!variables.length && !aliases.length) continue;
+    const regex = group[0].flags.some(f => kernel.regexFlags.has(f.name));
+    for (const line of group) {
+      for (const one of regex ? line.pattern.split(' or ') : [line.pattern]) {
+        const made = compile(regex ? rawRegex(one.trim(), argumentName) : readableToRegex(one.trim(), argumentName));
+        if (!made) continue;
+        if (variables.length) kernel.variableMakers.push({ ...made, args: [...new Set(variables)] });
+        if (aliases.length) kernel.aliasMakers.push({ ...made, args: [...new Set(aliases)] });
+      }
     }
   }
-  return kernel;
+}
+
+// What a statement line sets for its file, by the statements' `does` (kernel.statementEffects):
+// { comment, argument, indent } (the words in those places), or null if it is no such line.
+function statementEffect(line, kernel) {
+  if (!kernel.statementEffects || !line.trim() || /^\s/.test(line)) return null;
+  const masked = maskStrings(line);
+  for (const statement of kernel.statementEffects) {
+    if (statement.regex === undefined) {
+      const made = readableToRegex(statement.words, 'A');
+      statement.regex = made ? new RegExp('^\\s*(?:' + made.source + ')\\s*$', 'du') : null;
+    }
+    const m = statement.regex && statement.regex.exec(masked);
+    if (!m) continue;
+    const found = {};
+    for (const [effect, n] of Object.entries(statement.effects)) {
+      const span = m.indices.groups && m.indices.groups['a' + n];
+      if (span) found[effect] = line.slice(span[0], span[1]).trim();
+    }
+    return found;
+  }
+  return null;
+}
+
+// The words in argument N's place, for each match of `def` on a line: ['x', ...].
+function argumentTexts(line, def, n) {
+  const found = [];
+  for (const m of matches(maskStrings(line), def)) {
+    const span = m.indices.groups && m.indices.groups['a' + n];
+    if (span && !found.includes(line.slice(span[0], span[1]).trim())) found.push(line.slice(span[0], span[1]).trim());
+  }
+  return found;
+}
+
+// Whether a language's bodies are def-lang lines: one without an `editor` (like `def`);
+// `python` and a language with an editor (html, css, ...) have bodies of their own.
+function isDefLanguage(name, kernel) {
+  return !!name && name !== 'python' && !kernel.editors.has(name);
+}
+
+// The spans of a match's fixed words (its groups k0, k1, ...), in order.
+function keywordSpans(m) {
+  return Object.entries(m.indices.groups || {}).filter(([name, span]) => name[0] === 'k' && span).map(([, span]) => span).sort((a, b) => a[0] - b[0]);
 }
 
 // A definition line, `[modifiers] language[flags] pattern`, like the engine reads it:
@@ -67,10 +200,25 @@ function definitionLine(line, kernel = kernelNames([])) {
 }
 
 // The kernel word under `column` at the start of a line: a modifier (`internal`,
-// `shared`), a definition's language (`css`) or one of its flags (`written`):
+// `shared`), a definition's language (`css`) or one of its flags (`written`), or the
+// language of an entry's `does in LANGUAGE`:
 // { kind, name, start, end }, or null.
 function kernelWordAt(line, column, kernel) {
   const words = [];
+  // an entry's `does in LANGUAGE`: that language
+  const does = /^(\s+does\s+in\s+)(\w+)(\[[^\]]*\])?\s*$/.exec(line);
+  if (does) {
+    const start = does[1].length;
+    if (column >= start && column < start + does[2].length) return { kind: 'language', name: does[2], start, end: start + does[2].length };
+    let at = start + does[2].length + 1;
+    for (const piece of (does[3] || '[]').slice(1, -1).split(',')) {
+      const first = piece.trim().split(/\s+/)[0];
+      const from = at + piece.length - piece.trimStart().length;
+      if (first && column >= from && column < from + first.length) return { kind: 'flag', name: first, start: from, end: from + first.length };
+      at += piece.length + 1;
+    }
+    return null;
+  }
   const definition = definitionLine(line, kernel);
   if (definition) {
     for (const m of definition.modifiers) words.push({ kind: 'modifier', name: m.name, start: m.start, end: m.start + m.name.length });
@@ -106,16 +254,20 @@ function closingParen(text, start) {
 function readableToRegex(text, argumentName) {
   const restricted = new RegExp('^\\(' + escapeRegex(argumentName) + '\\d+:');
   const argument = new RegExp('^' + escapeRegex(argumentName) + '\\d+$');
-  const tokens = []; // [isSymbol, regex, isArgument]
+  const tokens = []; // [isSymbol, regex, isArgument, kind]
   let keywords = 0;
   let pos = 0;
+  // each argument's place is a group, a0, a1, ... (the first time it appears)
+  const named = new Set();
+  const group = (number, regex) => (named.has(number) ? regex : (named.add(number), '(?<a' + number + '>' + regex + ')'));
   while (pos < text.length) {
     if (/\s/.test(text[pos])) { pos++; continue; }
     const m = restricted.exec(text.slice(pos));
     if (m) {
       const end = closingParen(text, pos + m[0].length);
       if (end < 0) return null;
-      tokens.push([false, '(?:' + text.slice(pos + m[0].length, end).trim() + ')', true]);
+      const number = /\d+/.exec(m[0])[0];
+      tokens.push([false, group(number, '(?:' + text.slice(pos + m[0].length, end).trim() + ')'), true, 'restricted']);
       pos = end + 1;
       continue;
     }
@@ -123,9 +275,9 @@ function readableToRegex(text, argumentName) {
     while (end < text.length && !/\s/.test(text[end])) end++;
     const word = text.slice(pos, end);
     pos = end;
-    if (argument.test(word)) tokens.push([false, '[\\s\\S]+', true]);
+    if (argument.test(word)) tokens.push([false, group(/\d+$/.exec(word)[0], '[\\s\\S]+'), true, 'any']);
     // "A0": a text stands there (strings are masked as \u0001)
-    else if (word.length > 2 && word[0] === '"' && word[word.length - 1] === '"' && argument.test(word.slice(1, -1))) tokens.push([true, '\u0001+', true, 'text']);
+    else if (word.length > 2 && word[0] === '"' && word[word.length - 1] === '"' && argument.test(word.slice(1, -1))) tokens.push([true, group(/\d+(?="$)/.exec(word)[0], '\u0001+'), true, 'text']);
     else {
       // a fixed word only matches a whole word, like the engine reads it: `place` not inside `places`
       const letter = /[\p{L}\p{N}_]/u;
@@ -140,7 +292,7 @@ function readableToRegex(text, argumentName) {
     source += part;
   });
   // only arguments and texts (like joined text, `A0 "A1"`): no words to show
-  if (!source || tokens.every(([, part, , kind]) => part === '[\\s\\S]+' || kind === 'text')) return null;
+  if (!source || tokens.every(([, , , kind]) => kind === 'any' || kind === 'text')) return null;
   const isArgument = token => token[2];
   const edges = { leadingArgument: isArgument(tokens[0]), trailingArgument: isArgument(tokens[tokens.length - 1]) };
   // no fixed words at all (like the number-words def): the whole match counts, as whole words only,
@@ -152,9 +304,11 @@ function readableToRegex(text, argumentName) {
 // `def regex ...`: every plain group is a fixed word
 function rawRegex(text, argumentName) {
   let keywords = 0;
+  const named = new Set();
+  const group = number => (named.has(number) ? '(?:' : (named.add(number), '(?<a' + number + '>'));
   let source = text
-    .replace(new RegExp('\\(' + escapeRegex(argumentName) + '\\d+:\\s*', 'g'), '(?:')
-    .replace(new RegExp(escapeRegex(argumentName) + '\\d+', 'g'), '[\\s\\S]+')
+    .replace(new RegExp('\\(' + escapeRegex(argumentName) + '(\\d+):\\s*', 'g'), (all, number) => group(number))
+    .replace(new RegExp(escapeRegex(argumentName) + '(\\d+)', 'g'), (all, number) => group(number) + '[\\s\\S]+)')
     .replace(/(^|[^\\])\((?!\?)/g, (all, before) => before + '(?<k' + keywords++ + '>');
   return keywords ? { source, keywords } : null;
 }
@@ -186,26 +340,34 @@ function indexText(file, text, kernel = kernelNames([text])) {
   const entries = [];            // { kind, name, line, fields: { field: { value, line } } } of each entry
   const entryLines = new Set();  // the indented lines of the entries: their fields and their `does`
   const definitionLines = new Set(); // the lines `[modifiers] language[flags] pattern`
+  const aliasLines = new Set();      // the lines that make an alias (`X means Y`)
+  const doesLines = new Set();       // the def-lang lines of an entry's `does in def`
   const sequence = []; // ['import', file] (a `use` line) and ['def', group] in file order, for defOrder()
   let group = null;    // first line of the definition group being written, until its body starts
   let entry = null;    // the entry whose fields are being read
-  let does = null;     // the width of its `does` line, while its Python is read
+  let does = null;     // the width of its `does in LANGUAGE` line, while its body is read
   const width = line => line.length - line.trimStart().length;
   lines.forEach((line, number) => {
     if (entry && /^\s/.test(line) && line.trim()) {
+      if (does !== null && width(line) > does) {
+        // `does in def`: def-lang lines (phrases); another language: its lines
+        if (!entry.defLang) { entryLines.add(number); pythonLines.add(number); }
+        else if (line.trim().startsWith(comment)) commentLines.set(number, comment);
+        else doesLines.add(number);
+        return;
+      }
       entryLines.add(number);
-      if (does !== null && width(line) > does) { pythonLines.add(number); return; }
       does = null;
       let f;
       if (line.trim().startsWith(comment)) commentLines.set(number, comment);
       else if ((f = FIELD_LINE.exec(line))) {
         const field = f[1].split(/\s+/).join(' ');
         entry.fields[field] = { value: f[2] || '', line: number };
-        if (field === 'does') does = width(line);
+        if (field === 'does') { does = width(line); entry.does = doesLanguage(f[2]); entry.defLang = isDefLanguage(entry.does, kernel); }
         // a statement's words are found like a def's pattern, and lead to the entry
         if (field === 'words' && entry.kind === 'statement' && f[2]) {
           const pattern = compile(readableToRegex(f[2], argumentName));
-          if (pattern) defs.push({ file, line: entry.line, text: line.trim(), pattern: f[2], argumentName, statement: entry.name, flags: new Set(['written']), language: null, ...pattern });
+          if (pattern) defs.push({ file, line: entry.line, text: line.trim(), pattern: f[2], argumentName, statement: entry.name, flags: new Set(), keepsWords: true, language: null, ...pattern });
         }
       }
       return;
@@ -231,36 +393,48 @@ function indexText(file, text, kernel = kernelNames([text])) {
     if ((m = /^use\s+(.+?)\s*$/.exec(line))) { const from = /\s+from\s+(\S+)$/.exec(m[1]); sequence.push(['import', from ? from[1] : m[1]]); return; }
     // an entry: `language css`, `modifier shared`, ...; its fields follow, one level in
     if ((m = ENTRY_LINE.exec(line))) {
-      entry = { kind: m[1], name: m[2], line: number, fields: {} };
+      entry = { kind: m[1], name: m[2], line: number, fields: {}, does: null };
       entries.push(entry);
       if (m[1] === 'language') languageLines.push({ name: m[2], line: number });
       return;
     }
-    if ((m = /^argument\s+is\s+(.+?)\s*$/.exec(line))) { argumentName = m[1]; return; }
-    if ((m = /^comment\s+is\s+(.+?)\s*$/.exec(line))) { comment = m[1]; return; }
+    // a statement that sets the file's comment marker or argument name (by its `does`)
+    const effect = statementEffect(line, kernel);
+    if (effect) {
+      if (effect.argument) argumentName = effect.argument;
+      if (effect.comment) comment = effect.comment;
+      return;
+    }
     if (definition) {
       definitionLines.add(number);
       const flags = new Set(definition.flags.map(f => f.name));
-      const language = definition.language === 'def' ? null : definition.language;
+      // a language without an editor (like `def`) has def-lang bodies; python and the others don't
+      const language = isDefLanguage(definition.language, kernel) ? null : definition.language;
       const modifiers = definition.modifiers.map(x => x.name);
+      const rawPattern = [...flags].some(f => kernel.regexFlags.has(f)) || modifiers.some(x => kernel.regexModifiers.has(x));
+      const keepsWords = [...flags].some(f => kernel.wordsFlags.has(f)) || modifiers.some(x => kernel.wordsModifiers.has(x));
+      const internal = [...flags].some(f => kernel.hidingFlags.has(f)) || modifiers.some(x => kernel.hidingModifiers.has(x));
       // a body in another language (Python, HTML, ...): no def-lang phrases or variables in it
       inPython = language !== null;
       if (group === null) { group = number; sequence.push(['def', group]); }
-      if (language === 'html') inHtml = group;
-      const texts = flags.has('regex') ? definition.pattern.split(' or ') : [definition.pattern];
+      if (language && kernel.editors.get(definition.language) === 'html') inHtml = group;
+      const texts = rawPattern ? definition.pattern.split(' or ') : [definition.pattern];
       for (const t of texts) {
-        const pattern = compile(flags.has('regex') ? rawRegex(t.trim(), argumentName) : readableToRegex(t.trim(), argumentName));
-        if (pattern) defs.push({ file, line: number, text: line.trim(), pattern: t.trim(), argumentName, group, flags, language, modifiers, internal: modifiers.includes('internal'), ...pattern });
+        const pattern = compile(rawPattern ? rawRegex(t.trim(), argumentName) : readableToRegex(t.trim(), argumentName));
+        if (pattern) defs.push({ file, line: number, text: line.trim(), pattern: t.trim(), argumentName, group, flags, language, modifiers, rawPattern, keepsWords, internal, ...pattern });
       }
       return;
     }
-    if (!/^(use|comment|indent|error)\b/.test(line) && !kernel.modifiers.has(line.split(/\s/)[0]) && (m = /^(.+?)\s+means\s+(.+?)\s*$/.exec(line))) {
-      const words = m[1].trim().split(/\s+/).map(escapeRegex).join('\\s+');
-      const pattern = compile({ source: '(?<!\\S)(?<k0>' + words + ')(?!\\S)', keywords: m[1].trim().split(/\s+/).length });
-      if (pattern) defs.push({ file, line: number, text: line.trim(), pattern: m[1].trim(), alias: true, ...pattern });
+    // an alias, by a definition that makes one (`X means Y`): its words are a phrase
+    for (const maker of kernel.aliasMakers) {
+      for (const phrase of argumentTexts(line, maker, maker.args[0])) {
+        const words = phrase.split(/\s+/).map(escapeRegex).join('\\s+');
+        const pattern = compile({ source: '(?<!\\S)(?<k0>' + words + ')(?!\\S)', keywords: phrase.split(/\s+/).length });
+        if (pattern) { defs.push({ file, line: number, text: line.trim(), pattern: phrase, alias: true, ...pattern }); aliasLines.add(number); }
+      }
     }
   });
-  return { file, defs, lines, pythonLines, htmlLines, languageLines, entries, entryLines, definitionLines, commentLines, sequence };
+  return { file, defs, lines, pythonLines, htmlLines, languageLines, entries, entryLines, definitionLines, aliasLines, doesLines, commentLines, sequence };
 }
 
 // Every match of a def on a line, with greedy and with lazy arguments.
@@ -288,7 +462,7 @@ function findDefinitions(line, column, indexes) {
   for (const index of indexes) {
     for (const def of index.defs) {
       for (const m of matches(masked, def)) {
-        const spans = Object.values(m.indices.groups || {}).filter(Boolean).sort((a, b) => a[0] - b[0]);
+        const spans = keywordSpans(m);
         const at = spans.findIndex(span => span[0] <= column && column < span[1]);
         if (at < 0) continue;
         // the phrase under the cursor: fixed words next to each other, with only spaces between
@@ -313,16 +487,41 @@ function findDefinitions(line, column, indexes) {
     .filter(h => !seen.has(h.file + ':' + h.line) && seen.add(h.file + ':' + h.line));
 }
 
-// Words that are the language's own syntax; they keep their keyword color.
-const SYNTAX_WORDS = new Set(['is', 'not', 'are', 'does', 'do', 'and', 'or', 'both', 'either', 'if', 'otherwise',
-  'repeat', 'times', 'while', 'for', 'each', 'in', 'means']);
-const isSyntax = phrase => phrase.split(/\s+/).every(word => SYNTAX_WORDS.has(word) || !/[\p{L}\p{N}_]/u.test(word));
-
-// Every def phrase on a line, as [start, end]: fixed words of one def that sit next
-// to each other ("count the visit"), longest first when two overlap. Used to color
-// each phrase as one item.
+// Every phrase on a line, as [start, end, kind], to color: the fixed words of a
+// definition that sit next to each other ("count the visit"). Its kind comes from its
+// definition: 'keyword' when it keeps its arguments' words (`repeat … times :`, `A0 is
+// A1`), or is a statement or an alias (`plus`); 'number' for a word list (number words);
+// else 'function'. Symbols alone (`+`) keep the grammar's color.
 function phrasesIn(line, indexes) {
-  return allPhrases(line, indexes).filter(p => !isSyntax(line.slice(p.start, p.end))).map(p => [p.start, p.end]);
+  const kind = def => (def.statement || def.keepsWords ? 'keyword' : 'function');
+  const found = allPhrases(line, indexes).filter(p => /[\p{L}\p{N}_]/u.test(line.slice(p.start, p.end))).map(p => [p.start, p.end, kind(p.def)]);
+  const masked = maskStrings(line);
+  const lists = [];
+  for (const index of indexes) {
+    for (const def of index.defs) {
+      if (def.alias) {
+        for (const m of matches(masked, def)) {
+          for (const [start, end] of keywordSpans(m)) if (!found.some(([s, e]) => start < e && s < end)) found.push([start, end, 'keyword']);
+        }
+      } else if (!def.keywords) lists.push(def);
+    }
+  }
+  // a word list matches a whole value: each stretch between the phrases is tried
+  if (lists.length) {
+    const taken = [...found].sort((a, b) => a[0] - b[0]);
+    let at = 0;
+    for (const [from, to] of [...taken.map(([s, e]) => [at, (at = e, s)]), [at, line.length]]) {
+      const text = masked.slice(from, to);
+      const start = from + text.length - text.trimStart().length;
+      const end = from + text.trimEnd().length;
+      if (end <= start) continue;
+      for (const def of lists) {
+        def.whole = def.whole || new RegExp('^(?:' + def.regex.source + ')$', 'u');
+        if (def.whole.test(masked.slice(start, end))) { found.push([start, end, 'number']); break; }
+      }
+    }
+  }
+  return found.sort((a, b) => a[0] - b[0]);
 }
 
 // The fixed words of a library's statement on a line that is that statement (`greet`
@@ -341,7 +540,7 @@ function allPhrases(line, indexes) {
     for (const def of index.defs) {
       if (def.alias || !def.keywords) continue;
       for (const m of matches(masked, def)) {
-        const spans = Object.values(m.indices.groups || {}).filter(Boolean).sort((a, b) => a[0] - b[0]);
+        const spans = keywordSpans(m);
         let run = null;
         for (const span of spans) {
           if (run && /^\s*$/.test(line.slice(run[1], span[0]))) run[1] = span[1];
@@ -422,12 +621,12 @@ function looser(a, b, order) {
 function wrapsOnLine(def, start, end, line, inner) {
   if (def.alias || def.keywords < 2) return false;
   for (const m of matches(maskStrings(line), def)) {
-    const spans = Object.values(m.indices.groups || {}).filter(Boolean).sort((a, b) => a[0] - b[0]);
+    const spans = keywordSpans(m);
     if (spans.length < 2) continue;
     const first = spans[0][0];
     const last = spans[spans.length - 1][1];
     if (spans.some(s => s[1] <= start) && spans.some(s => s[0] >= end)) return true;
-    const sentence = def.flags && def.flags.has('written') && first === line.search(/\S/);
+    const sentence = def.keepsWords && first === line.search(/\S/);
     // a closing word at the very end (the `?` of a question) isn't wrapped: it takes the line itself
     const closing = inner && inner.leadingArgument && end >= line.trimEnd().length;
     if (sentence && start >= last && !closing) return true;
@@ -438,6 +637,19 @@ function wrapsOnLine(def, start, end, line, inner) {
 // The use of a def under the cursor: its fixed words and the parts that fill its
 // arguments (with the spaces between them), as [start, end] pairs. An argument at the start or end of the pattern
 // stops at the first phrase that binds looser, like the engine reads the line.
+// The phrase whose argument holds `column`: the words there fill its A0, A1, ...
+// { hit, part: [start, end], structure }, the innermost one, or null.
+function argumentAt(line, column, indexes, order) {
+  let best = null;
+  for (const phrase of allPhrases(line, indexes)) {
+    const hit = findDefinitions(line, phrase.start, indexes)[0];
+    const structure = hit && structureAt(line, phrase.start, indexes, order);
+    const part = structure && structure.parts.find(([start, end]) => start <= column && column < end);
+    if (part && (!best || part[1] - part[0] < best.part[1] - best.part[0])) best = { hit, part, structure };
+  }
+  return best;
+}
+
 function structureAt(line, column, indexes, order) {
   const hit = findDefinitions(line, column, indexes)[0];
   if (!hit) return null;
@@ -491,27 +703,28 @@ function structureAt(line, column, indexes, order) {
   return { keywords: runs, parts: gaps };
 }
 
-// Every variable name a program gives a value to, for coloring.
-function variableNames(indexes) {
-  const names = new Set();
-  const patterns = [
-    /^\s*`?([\p{L}\p{N}_]+)\s+is\s/u,
-    /^\s*shared\s+([\p{L}\p{N}_]+)/u,
-    /^\s*`?give\s+(?:\d+\s+)?([\p{L}\p{N}_]+)/u,
-    /^\s*for\s+each\s+([\p{L}\p{N}_]+)\s+in\s/u,
-    /^\s*add\s+.+\s+to\s+([\p{L}\p{N}_]+)\s*$/u,
-  ];
+// The variable a definition's argument names: the words when they are one name, or a
+// count and a name (`give 2 numbers ...` names `numbers`).
+function variableOf(text) {
+  if (/^[\p{L}_][\p{L}\p{N}_]*$/u.test(text)) return text;
+  const counted = /^\d+\s+([\p{L}_][\p{L}\p{N}_]*)\b/u.exec(text);
+  return counted ? counted[1] : null;
+}
+
+// Every variable name a program gives a value to, for coloring: what the definitions
+// that make variables name (kernel.variableMakers), and `use NAMES from FILE`.
+function variableNames(indexes, kernel) {
+  const names = new Set(kernel ? kernel.fixedVariables : []);
   for (const index of indexes) {
     index.lines.forEach((line, n) => {
-      if (index.pythonLines.has(n) || index.commentLines.has(n) || index.definitionLines.has(n) || index.entryLines.has(n) || /^\s*(argument\s+is\s|comment\s+is\s)/.test(line)) return;
+      if (index.pythonLines.has(n) || index.commentLines.has(n) || index.definitionLines.has(n) || index.entryLines.has(n) || index.doesLines.has(n)) return;
       const used = /^use\s+(.+?)\s+from\s+\S+\s*$/.exec(line);
       if (used) {
         for (const part of used[1].split(',')) names.add(part.split(/\s+as\s+/).pop().trim());
         return;
       }
-      for (const pattern of patterns) {
-        const m = pattern.exec(maskStrings(line));
-        if (m && !SYNTAX_WORDS.has(m[1])) names.add(m[1]);
+      for (const maker of kernel ? kernel.variableMakers : []) {
+        for (const n of maker.args) for (const text of argumentTexts(line, maker, n)) { const name = variableOf(text); if (name) names.add(name); }
       }
     });
   }
@@ -531,25 +744,20 @@ function variablesIn(line, names, phrases) {
   return found;
 }
 
-// Where a variable first gets a value: `x is ...`, `give x`, `for each x in`, `add ... to x`.
-function findVariable(word, currentFile, indexes) {
-  if (!/^[\p{L}\p{N}_]+$/u.test(word)) return null;
-  const w = escapeRegex(word);
-  const patterns = [
-    new RegExp('^\\s*(?:shared\\s+)?' + w + '\\s+is\\s'),
-    new RegExp('^\\s*`?give\\s+(?:\\S+\\s+)?' + w + '\\b'),
-    new RegExp('^\\s*for\\s+each\\s+' + w + '\\s+in\\s'),
-    new RegExp('^\\s*add\\s+.+\\s+to\\s+' + w + '\\s*$'),
-  ];
+// Where a variable first gets a value: a line where a definition that makes variables
+// names it (`x is ...`, `for each x in ...`).
+function findVariable(word, currentFile, indexes, kernel) {
+  if (!/^[\p{L}\p{N}_]+$/u.test(word) || !kernel) return null;
   // the current file first, then the rest of its package, then everything else
   const home = packageFolder(currentFile);
   const rank = index => index.file === currentFile ? 0 : home && index.file.startsWith(home + path.sep) ? 1 : 2;
   const ordered = [...indexes].sort((a, b) => rank(a) - rank(b));
   for (const index of ordered) {
     for (let n = 0; n < index.lines.length; n++) {
-      if (index.pythonLines.has(n)) continue;
-      const line = maskStrings(index.lines[n]);
-      if (patterns.some(p => p.test(line))) return { file: index.file, line: n };
+      if (index.pythonLines.has(n) || index.commentLines.has(n) || index.definitionLines.has(n) || index.entryLines.has(n) || index.doesLines.has(n)) continue;
+      for (const maker of kernel.variableMakers) {
+        if (maker.args.some(arg => argumentTexts(index.lines[n], maker, arg).some(text => variableOf(text) === word))) return { file: index.file, line: n };
+      }
     }
   }
   return null;
@@ -640,6 +848,22 @@ function linkedFolders(owner) {
   // global, or a library's folder of the same source; to index ones outside the workspace
   return listedLibraries(owner).map(e => libraryFolder(owner, e.name)).filter(Boolean)
     .filter(folder => !folder.startsWith(path.join(owner, 'libraries') + path.sep));
+}
+
+// The folders of every library a program uses, outside its libraries/ copies: those it
+// lists (linked, global), and those their own libraries.toml lists, and so on.
+function libraryFoldersOf(owner) {
+  const found = [];
+  const walk = from => {
+    for (const entry of listedLibraries(from)) {
+      const folder = libraryFolder(from, entry.name);
+      if (!folder || found.includes(folder)) continue;
+      found.push(folder);
+      walk(folder);
+    }
+  };
+  walk(owner);
+  return found.filter(folder => !folder.startsWith(path.join(owner, 'libraries') + path.sep));
 }
 
 // Is `line` a def-lang comment (not a line inside a Python, HTML, ... body)?
@@ -811,14 +1035,13 @@ function findLinks(line, fromFile) {
   return links;
 }
 
-const MEANS_LINE = /^(?!(?:def|use|comment|argument|error)\s)\S.*\s+means\s+/;
 
 // The description of the definition or entry on `line`: the comment lines right above it
 // (above the first line of a definition group, or of a run of `means` lines).
 function descriptionOf(index, line) {
   const lines = index.lines;
   const same = entryOn(index, line) ? (() => false)
-    : index.definitionLines.has(line) ? (n => index.definitionLines.has(n)) : (n => MEANS_LINE.test(lines[n] || ''));
+    : index.definitionLines.has(line) ? (n => index.definitionLines.has(n)) : (n => index.aliasLines.has(n));
   let start = line;
   while (start > 0 && same(start - 1)) start--;
   const comment = n => {
@@ -903,20 +1126,56 @@ function wordAt(text, column) {
   return null;
 }
 
-// What each built-in flag means, and the question that tells you when a def needs it.
-const FLAG_HELP = {
-  'written': '**written**: the def gets its arguments as they are written, not their values.\n\n' +
-    'Use it when the def needs the *words* of an argument: a name to store under, or code to run later, ' +
-    'many times, or maybe not at all.\n\n' +
-    'For example `x is 5` (x is a name), `repeat 3 times: say "hi"` (runs 3 times), ' +
-    '`"yes" if 1 < 2 otherwise nope` (only one side runs), `api "/x" runs ...` (runs on each request).',
-  'regex': '**regex**: the pattern is a regular expression; alternatives are split by ` or `.',
-};
-// ... and each built-in language
+// The help of the interpreter's own language; every other language, flag, modifier and
+// statement has its entry's comment lines.
+const FLAG_HELP = {};
 const LANGUAGE_HELP = {
-  'def': '**def**: the body is def-lang. Flags go in brackets right after it: `def[written] ...`.',
   'python': '**python**: the body is Python. It gets `self` (the kernel: `self["variables"]`, `self.run`, ...) and the arguments.',
 };
+
+// What each reserved word of an entry means, and `use`: shown on hover.
+const MORE = '\n\n[Writing languages, flags, modifiers and statements](https://github.com/Pedram-A-Keyvani/deflang-lib/blob/main/ENTRIES.md)';
+const RESERVED_HELP = {
+  'language': '**language NAME** declares a language for the bodies of definitions: `NAME greeting for A0` then makes a definition whose body is in it.\n\n' +
+    'Its `does` runs when such a definition runs, and acts on it: its value is `body` when `does` ends (`set body to upper-case`). Its definitions may have any flag.\n\nFields: `does in`, `editor`, `replaces`.' + MORE,
+  'flag': '**flag NAME** declares a flag, written in brackets right after a definition\'s language: `python[NAME] ...`, or by its `words`: `python[cache 60 seconds] ...`.\n\n' +
+    'Its `does` runs when the definition is made, before its pattern is read, and acts on the definition (`set arguments to as written`); it gets the words in their places, `A0`, `A1`, ...\n\nFields: `words`, `does in`, `replaces`.' + MORE,
+  'modifier': '**modifier NAME** declares a word in front of a line.\n\n' +
+    'In front of a definition (`NAME python ...`), its `does` acts on the definition, right after it is made (`set seen by to the file`). ' +
+    'In front of a name (`NAME visits is 0`), it acts on the name (`set name to shared`), and then the rest of the line runs.\n\nFields: `does in`, `replaces`.' + MORE,
+  'statement': '**statement NAME** declares a whole line the reader knows, by its `words`. They are matched before anything else on a line, so they never read as part of an expression.\n\n' +
+    'Its `does` runs when the line is read, and acts on the file of its line (`set comment marker to A0`); it gets the words in their places, `A0`, `A1`, ... (as they are written with `does in def[written]`).\n\nFields: `words`, `does in`, `replaces`.' + MORE,
+  'does': '**does in LANGUAGE[FLAGS]**: what the entry does, in that language; its body is one level deeper. It runs when the entry acts, where it acts: in the variables of that line. ' +
+    'Flags may follow, as on a definition line: `does in def[written]` gets its arguments\' words, not text.\n\n' +
+    '`does in def`: commands with no subject, acting on what the entry acts on (`set arguments to as written`, `set body to upper-case`). ' +
+    '`does in python`: the same through `self["entry"]`, and a statement\'s words as `a[0]`, `a[1]`, ...' + MORE,
+  'words': '**words PATTERN**: how the entry is written, like a pattern. A statement: the words of its line, `words comment is A0`. A flag: its words in the brackets, `words cache A0 seconds` for `[cache 60 seconds]` (without `words`, a flag is its name). ' +
+    'Its `A0`, `A1`, ... are the words in their places; its `does` gets them.' + MORE,
+  'editor': '**editor ID**: the editor\'s language for the bodies, for coloring and formatting them: `editor css`.' + MORE,
+  'replaces': '**replaces FILE**: this entry replaces the one of the same kind and name that `FILE` declared, named the way `use` names it: `replaces language/css`. ' +
+    'From then on, the new one is used, also by definitions made before it. Without `replaces`, declaring an entry another file declared is an error.' + MORE,
+  'use': '**use NAME** runs `NAME.def`, or the library `NAME`, once: next to this file, in the program\'s folder, then in the program\'s libraries. ' +
+    '`use NAME/FILE` is a library\'s file; `use NAMES from FILE` also gives this file the shared variables `NAMES` of `FILE`, and `use NAME as OTHER from FILE` calls one `OTHER` here.',
+};
+
+// The reserved word under `column` of line `n`: an entry's kind (`modifier`), one of its
+// fields (`does in`, `words`, ...), or `use`: { word, start, end }, or null.
+function reservedWordAt(index, n, column) {
+  const line = index.lines[n] || '';
+  const at = (start, shown, word = shown) => (column >= start && column < start + shown.length ? { word, start, end: start + shown.length } : null);
+  let m;
+  if ((m = ENTRY_LINE.exec(line))) return at(0, m[1]);
+  if (/^use\s/.test(line)) return at(0, 'use');
+  for (const entry of index.entries) {
+    for (const [field, value] of Object.entries(entry.fields)) {
+      if (value.line !== n) continue;
+      const start = line.search(/\S/);
+      const shown = field === 'does' ? ((/^does\s+in\b/.exec(line.slice(start)) || ['does'])[0]) : field;
+      return at(start, shown, field);
+    }
+  }
+  return null;
+}
 
 // The flag under the cursor on a definition line (`python[written] ...`): { flag, start, end }, or null.
 function flagAt(line, column, kernel = kernelNames([])) {
@@ -941,18 +1200,20 @@ function bodyOf(index, start) {
 // Flags a def probably needs but doesn't have: [{ line, message }]. A Python body that
 // runs or names an argument itself (self.run(A1), self["variables"][A0]) gets values unless the
 // def is `written`.
-function flagWarnings(index, indexes) {
+function flagWarnings(index, indexes, kernel = null) {
   const warnings = [];
   const groups = new Map();
   for (const def of index.defs) if (!def.alias && def.group !== undefined && !groups.has(def.group)) groups.set(def.group, def);
   for (const [start, def] of groups) {
     const flags = def.flags || new Set();
-    if (def.language === 'python' && !flags.has('written')) {
+    if (def.language === 'python' && !def.keepsWords) {
       const body = bodyOf(index, start).join('\n');
       const m = /self\.run\(\s*(A\d+)\s*\)|self\[\s*["']variables["']\s*\]\[\s*(A\d+)\s*\]|self\[\s*["'](?:aliases|files)["']\s*\].*?\[\s*(A\d+)\s*\]/.exec(body);
       if (m) {
         const name = m[1] || m[2] || m[3];
-        warnings.push({ line: start, message: `${name} is already a value here, not its words. If this def needs the words of ${name} (a name, or code to run itself), add the flag: python[written].` });
+        const keep = kernel && [...kernel.wordsFlags][0];
+        warnings.push({ line: start, message: `${name} is already a value here, not its words. If this definition needs the words of ${name} (a name, or code to run itself), ` +
+          (keep ? `add a flag that keeps them: python[${keep}].` : 'give it a flag that keeps them (one whose does says `set arguments to as written`).') });
       }
     }
   }
@@ -962,27 +1223,19 @@ function flagWarnings(index, indexes) {
 // ---- completions (IntelliSense)
 
 const STATEMENTS = [
-  ['def', 'def ${1:words A0}\n\t$0', 'Makes a definition in def-lang: its pattern, then its body indented below. Flags go in brackets right after `def`: `def[written] ...`.'],
   ['python', 'python ${1:words A0}\n\t$0', 'Makes a definition in Python: its pattern, then its Python body indented below.'],
   ['use', 'use ${1}', 'Runs another .def file, or a library, once. `use NAMES from FILE` also gives this file the shared variables NAMES of FILE (`use visits as count from counter`).'],
-  ['comment is', 'comment is ${1:#}', 'Lines starting with this are comments, from here to the end of the file (`//` by default).'],
-  ['argument is', 'argument is ${1:X}', 'Arguments are written X0, X1, ... from here on (A0, A1, ... by default).'],
-  ['indent', 'indent ${1:2}', 'How many spaces make one level, to the end of the file (4 by default; a tab is always one level).'],
-  ['language', 'language ${1:name}\n\tdoes\n\t\t$0', 'Declares a language: definitions `NAME pattern` then have bodies in it. Fields: `does` (Python; gets BODY, VAR, fill), `editor` (VS Code\'s language id), `flags` (the flags it accepts).'],
-  ['modifier', 'modifier ${1:name}\n\tapplies to ${2|definition,name|}\n\tdoes\n\t\t$0', 'Declares a modifier, a word in front of a line. Fields: `applies to` (definition or name), `does` (Python; gets TARGET).'],
-  ['flag', 'flag ${1:name}\n\tdoes\n\t\t$0', 'Declares a flag, written in brackets right after a language. Fields: `takes` (the kind of its value), `does` (Python; gets TARGET and VALUE).'],
-  ['statement', 'statement ${1:name}\n\twords ${2:words A0}\n\tdoes\n\t\t$0', 'Declares a statement, a whole line. Fields: `words` (its words, like a pattern), `does` (Python; gets `a`, its words as written).'],
-  ['error', 'error ${1:message}', 'Stops with this message.'],
+  ['language', 'language ${1:name}\n\tdoes in ${2|def,python|}\n\t\t$0', 'Declares a language: definitions `NAME pattern` then have bodies in it. Fields: `does in LANGUAGE` (runs when a definition runs; acts on its body: `set body to upper-case`), `editor` (VS Code\'s language id). Its definitions may have any flag.'],
+  ['modifier', 'modifier ${1:name}\n\tdoes in ${2|def,python|}\n\t\t$0', 'Declares a modifier, a word in front of a line. `does in LANGUAGE` acts on the definition or the name after it: `set seen by to the file`, `set name to shared`.'],
+  ['flag', 'flag ${1:name}\n\tdoes in ${2|def,python|}\n\t\t$0', 'Declares a flag, written in brackets right after a language. `does in LANGUAGE` acts on the definition when it is made: `set arguments to as written`. `words`: how it is written, with words of its own: `cache A0 seconds`.'],
+  ['statement', 'statement ${1:name}\n\twords ${2:words A0}\n\tdoes in ${3|def[written],def,python|}\n\t\t$0', 'Declares a statement, a whole line. Fields: `words` (its words, like a pattern), `does in LANGUAGE` (gets its words: A0, A1, ...; as written with `does in def[written]`).'],
 ];
 
 // An entry's fields, as they are offered on its indented lines.
 const FIELD_SNIPPETS = {
-  'does': ['does\n\t$0', 'Python: what the entry does.'],
-  'applies to': ['applies to ${1|definition,name|}', 'What the modifier is in front of: a definition (`internal def ...`) or a name (`shared visits is 0`).'],
-  'words': ['words ${1:words A0}', 'The words of the statement, written like a pattern.'],
+  'does': ['does in ${1|def,def[written],python|}\n\t$0', 'What the entry does, in that language, one level deeper, with its flags. It acts on what the entry acts on: self["entry"].'],
+  'words': ['words ${1:words A0}', 'How the entry is written, like a pattern: a statement\'s line, or a flag\'s words in the brackets.'],
   'editor': ['editor ${1:id}', "VS Code's language id, for coloring and formatting the bodies."],
-  'flags': ['flags ${1:written}', 'The flags the language accepts, like `written, regex`; without it, none.'],
-  'takes': ['takes ${1:number}', 'The kind of the flag\'s value (`def[cache 60]`: number); without it, none.'],
   'replaces': ['replaces ${1:language/css}', 'Replaces the entry of the same kind and name that another file declared: that file, named the way `use` names it.'],
 };
 
@@ -1005,6 +1258,8 @@ const KERNEL_KEYS = [
   ['files', 'A file\'s place: `self["files"][FILE]`: its "comment", "argument", "indent", "variables", and "names" (the shared variables it uses).'],
   ['shared', 'The shared variables\' values: `{(FILE, NAME): value}`.'],
   ['definitions', 'Every definition, in the order made.'],
+  ['entry', 'What the entry whose `does` runs acts on: its definition, name, value, body, ... (by kind).'],
+  ['mode', '"running", "checking" (def-lang check) or "reloading" (a changed file read again).'],
   ['language', 'The language entries: `self["language"]["python"]`.'],
   ['flag', 'The flag entries.'],
   ['modifier', 'The modifier entries.'],
@@ -1019,17 +1274,19 @@ const PYTHON_HELPERS = [
   ['Code', 'Code(${1:text})', 'Marks text as code, so another language puts it in without escaping it.'],
   ['DefException', 'DefException(${1:message})', 'Raise it to stop with a def-lang error.'],
 ];
-const LANGUAGE_HELPERS = [
-  ['BODY', 'BODY', "The def's body text."],
-  ['VAR', 'VAR', 'The argument values, as a list.'],
-  ['fill', 'fill(${1:BODY}, ${2:values})', 'BODY with values put where A0, A1, ... are.'],
-];
-// what each kind's `does` gets, besides self
+// what an entry's `does` acts on, self["entry"][...], by kind (the guide's 5.1)
+const ENTRY_KEYS = {
+  language: [['definition', 'The definition that runs.'], ['template', 'Its body, without its common indentation; the places of its arguments are marked, for fill.'],
+    ['values', 'The arguments: their values, or their words for a definition that keeps them.'], ['fill', 'fill(template, values): the template with the values in, as text.'],
+    ['body', "The template filled in with the values as text; the definition's value when `does` ends, unless it gives back another."],
+    ['as written', "True when the definition keeps its arguments' words."], ['in place', "True when the definition is an entry's does: it runs where the entry acts."]],
+  flag: [['definition', 'The definition being made, before its pattern is read.'], ['value', "The flag's value as written (`60` for `[cache 60]`), or None."]],
+  modifier: [['definition', 'The definition just made, when it stands in front of one.'], ['name', 'The name after it, when it stands in front of one.']],
+  statement: [],
+};
+// ... and, in Python, a statement's words
 const ENTRY_HELPERS = {
-  language: LANGUAGE_HELPERS,
-  modifier: [['TARGET', 'TARGET', 'What the modifier is in front of: the definition, or the name.']],
-  flag: [['TARGET', 'TARGET', 'The definition the flag is on.'],
-    ['VALUE', 'VALUE', "The flag's value as it is written (`60` in `def[cache 60]`), or None."]],
+  language: [], flag: [], modifier: [],
   statement: [['a', 'a', 'Its words in the places of A0, A1, ...: a[0], a[1], ..., as they are written.']],
 };
 
@@ -1109,8 +1366,8 @@ function importNames(file) {
   return [...names].sort();
 }
 
-// The def whose body holds `line` (Python or def-lang), or null. For the Python of an
-// entry's `does`: { language: true, entry }.
+// The def whose body holds `line` (Python or def-lang), or null. For the body of an
+// entry's `does in LANGUAGE`: { language: true, entry }.
 function bodyOwner(index, line) {
   let n = line;
   while (n > 0 && (/^\s/.test(index.lines[n]) || !index.lines[n].trim())) n--;
@@ -1126,7 +1383,8 @@ function bodyLanguageAt(index, n) {
   if (!index.pythonLines.has(n)) return null;
   const owner = bodyOwner(index, n);
   if (!owner) return null;
-  return owner.language === true ? 'python' : owner.language || null;
+  if (owner.language === true) return owner.entry.does && !owner.entry.defLang ? owner.entry.does : null;
+  return owner.language || null;
 }
 
 // The line an indented line belongs to: the first line above it that isn't indented.
@@ -1167,6 +1425,12 @@ function completionsAt(index, n, column, indexes, kernel = kernelNames([])) {
       for (const [label, insert, doc] of PYTHON_SELF) add('python', label, insert, doc);
       return items;
     }
+    // what an entry acts on: self["entry"]["body"], ...
+    if (owner && owner.entry && /\bself\[\s*["']entry["']\s*\]\[\s*["'][\w ]*$/.test(before)) {
+      for (const [label, doc] of ENTRY_KEYS[owner.entry.kind]) add('python', label, label, doc);
+      add('python', 'kind', 'kind', 'The kind of the entry: "language", "flag", "modifier" or "statement".');
+      return items;
+    }
     // the kernel's tree: self["variables"], ...
     if (/\bself\[\s*["']\w*$/.test(before)) {
       for (const [label, doc] of KERNEL_KEYS) add('python', label, label, doc);
@@ -1175,7 +1439,7 @@ function completionsAt(index, n, column, indexes, kernel = kernelNames([])) {
     if (/["'][^"']*$/.test(before)) return [];
     for (const [label, insert, doc] of PYTHON_HELPERS) add('python', label, insert, doc);
     if (owner && owner.entry) for (const [label, insert, doc] of ENTRY_HELPERS[owner.entry.kind]) add('python', label, insert, doc);
-    else if (owner) for (const p of patternParts(owner.pattern, owner.argumentName)) if (p.argument) add('variable', p.argument, p.argument, 'An argument of this def: its value' + (owner.flags.has('written') ? ', as written (its words)' : ''), { sort: '0' });
+    else if (owner) for (const p of patternParts(owner.pattern, owner.argumentName)) if (p.argument) add('variable', p.argument, p.argument, 'An argument of this def: its value' + (owner.keepsWords ? ', as written (its words)' : ''), { sort: '0' });
     return items;
   }
   if (index.htmlLines.has(n) || isComment(index, n)) return [];
@@ -1184,7 +1448,8 @@ function completionsAt(index, n, column, indexes, kernel = kernelNames([])) {
   const text = before.trimStart();
   let m;
   // an entry's fields: the ones it doesn't have yet
-  if (index.entryLines.has(n) || (/^\s/.test(line) && !text.includes(' ') && entryOn(index, ownerLine(index, n)))) {
+  if (!index.doesLines.has(n) && (index.entryLines.has(n) || (/^\s/.test(line) && !text.includes(' ') && entryOn(index, ownerLine(index, n)) &&
+    !(index.entries.find(e => e.line === ownerLine(index, n)) || {}).defLang))) {
     const entry = entryOn(index, ownerLine(index, n));
     if (!entry || /\s/.test(text)) return [];
     for (const field of FIELDS[entry.kind]) {
@@ -1195,15 +1460,16 @@ function completionsAt(index, n, column, indexes, kernel = kernelNames([])) {
   }
   // the flags in the brackets right after a language: `python[wri`
   if ((m = /^((?:[\w-]+\s+)*)(\w+)\[([^\]]*)$/.exec(before)) && kernel.languages.has(m[2]) && m[1].split(/\s+/).every(w => !w || kernel.modifiers.has(w))) {
+    // every declared flag: by its name, or by its words (`cache ${1:A0} seconds`)
     const used = m[3].split(',').map(f => f.trim().split(/\s+/)[0]);
-    const language = findLanguage(m[2], indexes);
-    const own = language && entryOn(indexes.find(i => i.file === language.file), language.line);
-    const accepted = !own ? [...kernel.flags] : (own.fields.flags ? own.fields.flags.value.split(',').map(f => f.trim()).filter(Boolean) : []);
-    for (const name of accepted) {
+    for (const name of kernel.flags) {
       if (used.slice(0, -1).includes(name)) continue;
       const declared = findEntry('flag', name, indexes);
-      const help = FLAG_HELP[name] || (declared ? descriptionOf(indexes.find(i => i.file === declared.file), declared.line) : '');
-      add('flag', name, name, help, { sort: '0' });
+      const index = declared && indexes.find(i => i.file === declared.file);
+      const entry = index && entryOn(index, declared.line);
+      const help = FLAG_HELP[name] || (index ? descriptionOf(index, declared.line) : '');
+      const snippet = entry && entry.fields.words ? defSnippet({ pattern: entry.fields.words.value, argumentName: 'A' }) : null;
+      add('flag', snippet ? snippet.label : name, snippet ? snippet.insert : name, help, { sort: '0', filter: name });
     }
     return items;
   }
@@ -1228,11 +1494,19 @@ function completionsAt(index, n, column, indexes, kernel = kernelNames([])) {
       if (!BUILT_IN.languages.includes(name)) add('language', name, name + ' ${1:words A0}\n\t$0', help('language', name) || `Makes a definition whose body is ${name}.`, { sort: '1' });
     }
     for (const name of kernel.modifiers) add('statement', name, name + ' ', help('modifier', name), { sort: '1', detail: 'modifier' });
+    // the declared statements, by their words
+    for (const other of indexes) {
+      for (const entry of other.entries) {
+        if (entry.kind !== 'statement' || !entry.fields.words) continue;
+        const snippet = defSnippet({ pattern: entry.fields.words.value, argumentName: 'A' });
+        add('statement', snippet.label, snippet.insert, descriptionOf(other, entry.line), { sort: '1', detail: 'statement', filter: snippet.filter });
+      }
+    }
   }
   const seen = new Set();
   for (const other of visible) {
     for (const def of other.defs) {
-      if (def.keywords === 0 || (def.flags && def.flags.has('regex'))) continue;
+      if (def.keywords === 0 || def.rawPattern || def.statement) continue;
       const snippet = def.alias ? { label: def.pattern, insert: snippetText(def.pattern), filter: def.pattern, leading: false } : defSnippet(def);
       if (!snippet.filter || seen.has(snippet.label)) continue;
       // `A0 is A1`: only after something is typed
@@ -1245,7 +1519,7 @@ function completionsAt(index, n, column, indexes, kernel = kernelNames([])) {
         { filter: snippet.filter, detail: path.basename(other.file) + (def.alias ? ' (means)' : ''), sort: snippet.leading ? '1' : '2' });
     }
   }
-  for (const name of variableNames(visible)) add('variable', name, name, 'A variable of the program.', { sort: '0' });
+  for (const name of variableNames(visible, kernel)) add('variable', name, name, 'A variable of the program.', { sort: '0' });
   return items;
 }
 
@@ -1302,7 +1576,8 @@ function formatParts(text, kernel) {
   let body = null;
   let bodyLanguage = null; // after a definition line: the language of its body, or null (def-lang)
   let entry = false;       // after an entry line: its fields, and the Python of its `does`
-  let does = null;         // the width of the entry's `does` line
+  let does = null;         // the width of the entry's `does in LANGUAGE` line
+  let doesIn = null;       // ... and its language: a body in def is formatted as def-lang lines
   const lead = line => line.slice(0, line.length - line.trimStart().length);
   const width = line => [...lead(line)].reduce((n, c) => n + (c === '\t' ? indent : 1), 0);
   for (const raw of lines) {
@@ -1318,8 +1593,12 @@ function formatParts(text, kernel) {
     if (indented && bodyLanguage) { body = { body: [line], language: bodyLanguage, indent, at: indent, above: 0 }; continue; }
     if (indented && entry) {
       // the Python of `does` goes one level under it
-      if (does !== null && width(line) > does) { body = { body: [line], language: 'python', indent, at: does + indent, above: does }; continue; }
-      does = content === 'does' ? width(line) : null;
+      if (does !== null && width(line) > does && !isDefLanguage(doesIn, kernel)) { body = { body: [line], language: doesIn, indent, at: does + indent, above: does }; continue; }
+      if (does === null || width(line) <= does) {
+        const m = /^does\s+in\s+(\w+)(?:\[[^\]]*\])?$/.exec(content);
+        does = m ? width(line) : null;
+        doesIn = m ? m[1] : null;
+      }
     }
     if (!indented) {
       bodyLanguage = null;
@@ -1328,13 +1607,14 @@ function formatParts(text, kernel) {
       let m;
       const definition = definitionLine(content, kernel);
       if (definition) {
-        bodyLanguage = definition.language === 'def' ? null : definition.language;
+        bodyLanguage = isDefLanguage(definition.language, kernel) ? null : definition.language;
         parts.push({ line: content });
         continue;
       }
       if (ENTRY_LINE.test(content)) { entry = true; parts.push({ line: collapseSpaces(content) }); continue; }
-      if ((m = /^comment\s+is\s+(.+)$/.exec(content))) comment = m[1].trim();
-      if ((m = /^indent\s+(\d+)$/.exec(content)) && Number(m[1]) > 0) indent = Number(m[1]);
+      const effect = statementEffect(content, kernel);
+      if (effect && effect.comment) comment = effect.comment;
+      if (effect && /^\d+$/.test(effect.indent || '') && Number(effect.indent) > 0) indent = Number(effect.indent);
     }
     if (width(line) % indent) { parts.push({ line }); continue; } // not a whole level: as it is
     const shown = content.startsWith(comment) ? content : collapseSpaces(content);
@@ -1378,9 +1658,9 @@ function render(parts, formatted) {
 }
 
 module.exports = {
-  FLAG_HELP, LANGUAGE_HELP, flagAt, flagWarnings, wrapsOnLine, kernelNames, definitionLine, kernelWordAt, findEntry, entryOn, replacementsOf, statementWordsIn,
+  FLAG_HELP, LANGUAGE_HELP, RESERVED_HELP, isDefLanguage, reservedWordAt, argumentAt, flagAt, statementEffect, argumentTexts, flagWarnings, wrapsOnLine, kernelNames, definitionLine, kernelWordAt, findEntry, entryOn, replacementsOf, statementWordsIn,
   indexText, findDefinitions, findVariable, findLinks, sourceOf, headerOf, descriptionOf, splitDescription, readableToRegex,
-  packageFolder, programFolder, libraryFolder, linkedFolders, listedLibraries, globalFolder, resolveImport, visibleIndexes, templateExpressionAt, wordAt, phrasesIn, defOrder, orderStarts, structureAt,
+  packageFolder, programFolder, libraryFolder, linkedFolders, libraryFoldersOf, listedLibraries, globalFolder, resolveImport, visibleIndexes, templateExpressionAt, wordAt, phrasesIn, defOrder, orderStarts, structureAt,
   completionsAt, defSnippet, patternParts, importNames, formatText, formatTextWith, bodyLanguageAt,
   variableNames, variablesIn, findLanguage, isComment, apiRoutes, viewPaths, htmlReferenceAt, resolveHtmlReference,
 };

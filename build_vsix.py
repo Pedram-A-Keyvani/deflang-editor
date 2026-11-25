@@ -8,7 +8,7 @@ from pathlib import Path
 
 HERE = Path(__file__).parent
 FILES = ["package.json", "language-configuration.json", "syntaxes/def.tmLanguage.json", "README.md",
-         "extension.js", "lib.js", "palette.json"]
+         "extension.js", "lib.js", "grammar.js", "palette.json"]
 
 package = json.loads((HERE / "package.json").read_text())
 manifest = f"""<?xml version="1.0" encoding="utf-8"?>
@@ -48,7 +48,7 @@ with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as vsix:
 
 with zipfile.ZipFile(out) as vsix:
     names = set(vsix.namelist())
-needed = {"extension/extension.js", "extension/lib.js", "extension/package.json"}
+needed = {"extension/extension.js", "extension/lib.js", "extension/grammar.js", "extension/package.json"}
 missing = needed - names
 if missing:
     raise SystemExit(f"the package is missing {sorted(missing)}")

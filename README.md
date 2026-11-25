@@ -76,6 +76,12 @@ unless a `def-lang` alias is there already). Open a new terminal to use it.
   entries (`language`, `modifier`, …) and their fields, modifiers, arguments, text, numbers,
   variables and the phrases of your defs. Bodies in another language (Python, HTML,
   CSS, JavaScript, …) are colored in that language.
+- **Nothing of a library is built in.** The editor knows only the interpreter's words
+  (`python`, `use`, the entries); everything else it learns from what your program
+  declares, the way the interpreter does: a definition that keeps its arguments' words
+  colors like a keyword, a statement sets the comment marker if its `does` says so, a
+  language's `editor` names the colors of its bodies. When a new language or modifier
+  is declared, the editor offers to reload the window, which colors its bodies.
 - **Hover and Ctrl+click** (or F12) on a phrase go to its definition and show its
   description: the comment lines right above it. They also work on variables, on the
   file after `use`, on a library's statements, and on the language, flags and

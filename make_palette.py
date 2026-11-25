@@ -62,22 +62,21 @@ UNDERLINE = {
 
 SCOPES = [
     (["storage.type.def.def", "keyword.control.import.def"], "keyword", "bold"),
-    (["keyword.control.def", "keyword.control.means.def", "keyword.control.loop.def", "keyword.control.question.def",
-      "keyword.control.error.def", "keyword.control.field.def"], "keyword", ""),
-    (["keyword.other.def", "keyword.other.logical.def", "keyword.other.operator.def"], "word", ""),
-    (["storage.modifier.def", "storage.modifier.as-written.def"], "flag", "italic"),
+    # modifiers and an entry's fields; a library's keywords are colored from their
+    # definitions (semantic colors, below)
+    (["keyword.control.def", "keyword.control.field.def"], "keyword", ""),
+    (["storage.modifier.def"], "flag", "italic"),
     (["entity.name.function.def"], "phrase", ""),
     # an entry's name (`language css`, `modifier shared`): a declared name
     (["entity.name.type.def"], "phrase", "bold"),
     (["variable.parameter.def"], "variable", "italic"),
     (["string.quoted.double.def", "punctuation.definition.string.begin.def", "punctuation.definition.string.end.def",
       "entity.name.namespace.def"], "string", ""),
-    (["constant.numeric.def", "constant.numeric.word.def", "constant.language.def"], "number", ""),
+    (["constant.numeric.def", "constant.language.def"], "number", ""),
     (["comment.line.double-slash.def"], "comment", "italic"),
     (["keyword.operator.def", "punctuation.section.brackets.def", "punctuation.definition.echo.def",
       "punctuation.definition.parameter.def", "punctuation.separator.def"], "operator", ""),
     (["string.regexp.def"], "regex", ""),
-    (["invalid.illegal.message.def"], "error", "bold"),
 ]
 
 
@@ -120,9 +119,10 @@ if __name__ == "__main__":
         "textMateRules": rules(PALETTES["dark"]),
         "[*Light*]": {"textMateRules": rules(PALETTES["light"])},
     }
-    # phrases, variables, and the modifiers a library declares (colored like `shared`)
+    # phrases, variables, a library's keywords (the words of definitions that keep their
+    # arguments' words, statements, aliases, modifiers), and word lists (number words)
     semantic = lambda palette: {"function:def-lang": palette["phrase"], "variable:def-lang": palette["variable"],
-                                "keyword:def-lang": palette["keyword"]}
+                                "keyword:def-lang": palette["keyword"], "number:def-lang": palette["number"]}
     defaults["editor.semanticTokenColorCustomizations"] = {
         "rules": semantic(PALETTES["dark"]),
         "[*Light*]": {"rules": semantic(PALETTES["light"])},

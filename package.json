@@ -2,7 +2,7 @@
   "name": "def-lang",
   "displayName": "def-lang",
   "description": "The def-lang language: run .def programs, install libraries, and colors, Ctrl+click and hover for phrases, variables and imports",
-  "version": "0.39.0",
+  "version": "0.42.0",
   "publisher": "def-lang",
   "license": "MIT",
   "engines": {
@@ -41,17 +41,7 @@
         "scopeName": "source.def",
         "path": "./syntaxes/def.tmLanguage.json",
         "embeddedLanguages": {
-          "meta.embedded.block.python": "python",
-          "meta.embedded.block.html": "html",
-          "meta.embedded.block.css": "css",
-          "meta.embedded.block.javascript": "javascript",
-          "meta.embedded.block.js": "javascript",
-          "meta.embedded.block.sql": "sql",
-          "meta.embedded.block.markdown": "markdown",
-          "meta.embedded.block.json": "json",
-          "meta.embedded.block.shell": "shellscript",
-          "meta.embedded.block.bash": "shellscript",
-          "meta.embedded.block.yaml": "yaml"
+          "meta.embedded.block.python": "python"
         }
       }
     ],
@@ -74,10 +64,6 @@
           {
             "scope": [
               "keyword.control.def",
-              "keyword.control.means.def",
-              "keyword.control.loop.def",
-              "keyword.control.question.def",
-              "keyword.control.error.def",
               "keyword.control.field.def"
             ],
             "settings": {
@@ -86,18 +72,7 @@
           },
           {
             "scope": [
-              "keyword.other.def",
-              "keyword.other.logical.def",
-              "keyword.other.operator.def"
-            ],
-            "settings": {
-              "foreground": "#88A9D8"
-            }
-          },
-          {
-            "scope": [
-              "storage.modifier.def",
-              "storage.modifier.as-written.def"
+              "storage.modifier.def"
             ],
             "settings": {
               "foreground": "#7A8597",
@@ -144,7 +119,6 @@
           {
             "scope": [
               "constant.numeric.def",
-              "constant.numeric.word.def",
               "constant.language.def"
             ],
             "settings": {
@@ -179,15 +153,6 @@
             "settings": {
               "foreground": "#C79BD6"
             }
-          },
-          {
-            "scope": [
-              "invalid.illegal.message.def"
-            ],
-            "settings": {
-              "foreground": "#E39A9A",
-              "fontStyle": "bold"
-            }
           }
         ],
         "[*Light*]": {
@@ -205,10 +170,6 @@
             {
               "scope": [
                 "keyword.control.def",
-                "keyword.control.means.def",
-                "keyword.control.loop.def",
-                "keyword.control.question.def",
-                "keyword.control.error.def",
                 "keyword.control.field.def"
               ],
               "settings": {
@@ -217,18 +178,7 @@
             },
             {
               "scope": [
-                "keyword.other.def",
-                "keyword.other.logical.def",
-                "keyword.other.operator.def"
-              ],
-              "settings": {
-                "foreground": "#2E5A9C"
-              }
-            },
-            {
-              "scope": [
-                "storage.modifier.def",
-                "storage.modifier.as-written.def"
+                "storage.modifier.def"
               ],
               "settings": {
                 "foreground": "#67707F",
@@ -275,7 +225,6 @@
             {
               "scope": [
                 "constant.numeric.def",
-                "constant.numeric.word.def",
                 "constant.language.def"
               ],
               "settings": {
@@ -310,15 +259,6 @@
               "settings": {
                 "foreground": "#7A4290"
               }
-            },
-            {
-              "scope": [
-                "invalid.illegal.message.def"
-              ],
-              "settings": {
-                "foreground": "#A33A3A",
-                "fontStyle": "bold"
-              }
             }
           ]
         }
@@ -327,13 +267,15 @@
         "rules": {
           "function:def-lang": "#DCE1E8",
           "variable:def-lang": "#E8C27A",
-          "keyword:def-lang": "#88A9D8"
+          "keyword:def-lang": "#88A9D8",
+          "number:def-lang": "#C79BD6"
         },
         "[*Light*]": {
           "rules": {
             "function:def-lang": "#2E3440",
             "variable:def-lang": "#8A6210",
-            "keyword:def-lang": "#2E5A9C"
+            "keyword:def-lang": "#2E5A9C",
+            "number:def-lang": "#7A4290"
           }
         }
       }

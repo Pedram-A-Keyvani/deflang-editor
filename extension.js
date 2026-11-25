@@ -45,9 +45,10 @@ async function indexes(document) {
         texts.set(uri.fsPath, Buffer.from(await vscode.workspace.fs.readFile(uri)).toString('utf8'));
       } catch (error) { log.appendLine(`could not read ${uri.fsPath}: ${error}`); }
     }
-    // libraries a program links to outside the workspace are part of it too
+    // the libraries a program uses, wherever they are (global, linked), and the ones
+    // they use in turn: what they declare is what the editor knows
     for (const uri of await vscode.workspace.findFiles('**/libraries.toml', '**/node_modules/**', 500)) {
-      for (const folder of lib.linkedFolders(require('path').dirname(uri.fsPath))) {
+      for (const folder of lib.libraryFoldersOf(require('path').dirname(uri.fsPath))) {
         for (const name of require('fs').readdirSync(folder).filter(n => n.endsWith('.def'))) {
           const file = require('path').join(folder, name);
           if (!texts.has(file)) {
@@ -58,6 +59,7 @@ async function indexes(document) {
     }
     kernelBase = lib.kernelNames(texts.values());
     cache = new Map([...texts].map(([file, text]) => [file, lib.indexText(file, text, kernelBase)]));
+    updateGrammar(kernelBase);
     log.appendLine(`found ${cache.size} .def files, ${[...cache.values()].reduce((n, i) => n + i.defs.length, 0)} definitions, languages: ${[...kernelBase.languages].join(', ')}, modifiers: ${[...kernelBase.modifiers].join(', ')}`);
   }
   // an open .def file as it is now, saved or not
@@ -65,6 +67,35 @@ async function indexes(document) {
   const all = new Map(cache);
   if (open) all.set(document.uri.fsPath, lib.indexText(document.uri.fsPath, open, kernel));
   return [...all.values()];
+}
+
+// The grammar, from what the programs declare: their languages (each one's `editor`
+// gives the VS Code grammar for its bodies) and their modifiers (grammar.js). VS Code
+// reads a grammar when a window opens, so a change is offered with a reload, once.
+let reloadOffered = false;
+function updateGrammar(declared) {
+  if (!extensionContext) return;
+  try {
+    const scopes = new Map(); // VS Code language id -> its grammar's scope
+    for (const extension of vscode.extensions.all) {
+      for (const grammar of ((extension.packageJSON || {}).contributes || {}).grammars || []) {
+        if (grammar.language && grammar.scopeName && grammar.language !== 'def-lang' && !scopes.has(grammar.language)) scopes.set(grammar.language, grammar.scopeName);
+      }
+    }
+    const languages = [...declared.languages].map(name => {
+      const id = name === 'python' ? 'python' : declared.editors.get(name) || null;
+      return { name, id, scope: id ? scopes.get(id) || null : null };
+    });
+    const made = require('./grammar').makeGrammar({ languages, modifiers: [...declared.modifiers] });
+    if (!require('./grammar').writeGrammar(extensionContext.extensionPath, made) || reloadOffered) return;
+    reloadOffered = true;
+    log.appendLine(`the grammar now has the languages ${languages.map(l => l.name).join(', ')} and the modifiers ${[...declared.modifiers].join(', ') || '(none)'}`);
+    const reload = 'Reload window';
+    vscode.window.showInformationMessage('def-lang: the colors of the declared languages and modifiers are ready after a reload.', reload)
+      .then(choice => { if (choice === reload) vscode.commands.executeCommand('workbench.action.reloadWindow'); });
+  } catch (error) {
+    log.appendLine(`the grammar couldn't be written: ${error.message}`);
+  }
 }
 
 // What is under the mouse: a phrase with its defs, or a variable with its first value.
@@ -130,10 +161,20 @@ async function lookup(document, position) {
   }
 
   const word = lib.wordAt(text, position.character - shift);
-  if (!word) return null;
-  const found = lib.findVariable(word.text, document.uri.fsPath, visible);
-  const wordRange = range(word.start, word.start + word.text.length);
-  return found ? { all, found, name: word.text, range: wordRange, solid: [wordRange], dotted: [] } : null;
+  const found = word && lib.findVariable(word.text, document.uri.fsPath, visible, kernel);
+  if (found) {
+    const wordRange = range(word.start, word.start + word.text.length);
+    return { all, found, name: word.text, range: wordRange, solid: [wordRange], dotted: [] };
+  }
+  // words that fill a phrase's argument, and are no phrase or variable themselves
+  // (`arguments` in `set arguments to as written`): that phrase, about those words
+  const inside = lib.argumentAt(text, position.character - shift, visible, lib.defOrder(lib.orderStarts(document.uri.fsPath), all));
+  if (!inside) return null;
+  const spans = list => list.map(([start, end]) => range(start, end));
+  return {
+    all, hits: [inside.hit], range: range(...inside.part), focus: text.slice(...inside.part).trim(),
+    solid: spans(inside.structure.keywords), dotted: spans(inside.structure.parts),
+  };
 }
 
 function lineRange(all, file, line) {
@@ -149,10 +190,25 @@ function logged(name, provide) {
 
 // A definition in a hover: its description, its examples (input → result), only its
 // def line(s) (the body is a Ctrl+click away), and a link to it.
-function describe(text, index, line, all = null) {
+function describe(text, index, line, all = null, focus = null) {
   const description = lib.splitDescription(lib.descriptionOf(index, line));
+  let lines = description.text ? description.text.split('\n') : [];
+  // hovering words that fill an argument: the lines about them first, in bold
+  if (focus) {
+    const words = focus.split(/\s+/).map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s+');
+    const edge = '(?![\\p{L}\\p{N}_-])';
+    // the line that starts with them (a row of a table), else one with them in backticks, else any
+    const tiers = [new RegExp('^' + words + edge, 'u'), new RegExp('`' + words + '`', 'u'),
+      new RegExp('(?<![\\p{L}\\p{N}_-])' + words + edge, 'u')];
+    const tier = tiers.find(about => lines.some(l => about.test(l.trim())));
+    const lead = tier ? lines.filter(l => tier.test(l.trim())) : [];
+    if (lead.length) {
+      text.appendMarkdown(lead.map(l => '**' + l.trim() + '**').join('  \n') + '\n\n');
+      lines = lines.filter(l => !lead.includes(l));
+    }
+  }
   // each comment line is its own line in the hover
-  if (description.text) text.appendMarkdown(description.text.split('\n').join('  \n') + '\n\n');
+  if (lines.length) text.appendMarkdown(lines.join('  \n') + '\n\n');
   for (const example of description.examples) {
     text.appendCodeblock(example.result ? `${example.input}\n→ ${example.result}` : example.input, 'def-lang');
   }
@@ -252,12 +308,25 @@ function activate(context) {
   context.subscriptions.push(vscode.languages.registerHoverProvider(withTemplates, {
     provideHover: logged('hover', async (document, position) => {
       clearUnderline();
-      // a built-in flag or language on a definition line (`python[written]`): what it
-      // means; a declared one shows its entry (lookup)
-      const word = document.languageId === 'def-lang' &&
-        (await indexes(document), lib.kernelWordAt(document.lineAt(position.line).text, position.character, kernel));
-      const help = word && (word.kind === 'flag' ? lib.FLAG_HELP : word.kind === 'language' ? lib.LANGUAGE_HELP : {})[word.name];
-      if (help) return new vscode.Hover(new vscode.MarkdownString(help), new vscode.Range(position.line, word.start, position.line, word.end));
+      // a flag or language on a definition line (`python[written]`): the entry that
+      // declares it (lookup); else, for `python`, `def`, `written` and `regex`, a short help
+      const all = document.languageId === 'def-lang' ? await indexes(document) : null;
+      // a reserved word of an entry (`modifier`, `does in`, `words`, ...) or `use`: what it means
+      const here = all && all.find(i => i.file === document.uri.fsPath);
+      const reserved = here && lib.reservedWordAt(here, position.line, position.character);
+      if (reserved) {
+        const where = new vscode.Range(position.line, reserved.start, position.line, reserved.end);
+        showUnderline(document, [where]);
+        return new vscode.Hover(new vscode.MarkdownString(lib.RESERVED_HELP[reserved.word]), where);
+      }
+      const word = all && lib.kernelWordAt(document.lineAt(position.line).text, position.character, kernel);
+      const help = word && !lib.findEntry(word.kind, word.name, all) &&
+        (word.kind === 'flag' ? lib.FLAG_HELP : word.kind === 'language' ? lib.LANGUAGE_HELP : {})[word.name];
+      if (help) {
+        const where = new vscode.Range(position.line, word.start, position.line, word.end);
+        showUnderline(document, [where]);
+        return new vscode.Hover(new vscode.MarkdownString(help), where);
+      }
       const found = await lookup(document, position);
       if (!found) return document.languageId === 'def-lang' ? embeddedHover(document, position) : undefined;
       const text = new vscode.MarkdownString();
@@ -283,7 +352,7 @@ function activate(context) {
       } else if (found.hits) {
         found.hits.forEach((hit, i) => {
           if (i) text.appendMarkdown('\n\n---\n\n');
-          describe(text, found.all.find(x => x.file === hit.file), hit.line, found.all);
+          describe(text, found.all.find(x => x.file === hit.file), hit.line, found.all, found.focus);
         });
       } else {
         const index = found.all.find(x => x.file === found.found.file);
@@ -301,7 +370,10 @@ function activate(context) {
   // def phrases are "function" (blue), your variables "variable" (yellow), lines that
   // start with a `comment is` marker "comment" (the grammar only knows //), and the
   // modifiers a library declares "keyword", like `shared`
-  const legend = new vscode.SemanticTokensLegend(['function', 'variable', 'comment', 'keyword'], []);
+  // phrases are "function", or "keyword" (a definition that keeps its arguments' words,
+  // a statement, an alias) or "number" (a word list, like the number words), by their
+  // definition; modifiers are "keyword" too
+  const legend = new vscode.SemanticTokensLegend(['function', 'variable', 'comment', 'keyword', 'number'], []);
   context.subscriptions.push(vscode.languages.registerDocumentSemanticTokensProvider(selector, {
     onDidChangeSemanticTokens: recolor.event,
     provideDocumentSemanticTokens: logged('colors', async document => {
@@ -310,7 +382,7 @@ function activate(context) {
       const tokens = new vscode.SemanticTokensBuilder(legend);
       // only the defs and variables of the files this file's program uses, like the engine
       const visible = lib.visibleIndexes(document.uri.fsPath, all);
-      const names = lib.variableNames(visible);
+      const names = lib.variableNames(visible, kernel);
       for (let n = 0; n < document.lineCount; n++) {
         const line = document.lineAt(n).text;
         // in a view's HTML, {name} is a variable
@@ -332,14 +404,14 @@ function activate(context) {
           const next = line.slice(word.end).search(/\S/);
           after = next < 0 ? line.length : word.end + next;
         }
-        // definition lines, entries, `means` lines and `use` lines are colored by the
-        // grammar; Python bodies by Python
+        // definition lines, entries and `use` lines are colored by the grammar; Python
+        // bodies by Python; everything else from the definitions (statements, aliases too)
         if (current.pythonLines.has(n) || current.definitionLines.has(n) || current.entryLines.has(n) || lib.entryOn(current, n) ||
-          /^\s*(use\s|argument\s|comment\s|indent\s)/.test(line) || /^\S.*\smeans\s/.test(line)) continue;
-        const phrases = lib.phrasesIn(line.slice(after), visible).map(([s, e]) => [s + after, e + after]);
+          /^\s*use\s/.test(line)) continue;
+        const phrases = lib.phrasesIn(line.slice(after), visible).map(([s, e, kind]) => [s + after, e + after, kind]);
         // a library's statement: its words colored like `use`
-        const statement = new Set(lib.statementWordsIn(line, visible).map(([s, e]) => s + ':' + e));
-        const items = [...phrases.map(p => [...p, statement.has(p[0] + ':' + p[1]) ? 3 : 0]),
+        const type = { function: 0, keyword: 3, number: 4 };
+        const items = [...phrases.map(([s, e, kind]) => [s, e, type[kind]]),
           ...lib.variablesIn(line, names, phrases).filter(([s]) => s >= after).map(v => [...v, 1])];
         for (const [start, end, type] of items.sort((a, b) => a[0] - b[0])) tokens.push(n, start, end - start, type, 0);
       }
@@ -418,7 +490,7 @@ function watchFlags(context) {
     const all = await indexes(document);
     const current = all.find(i => i.file === document.uri.fsPath);
     if (!current) return;
-    diagnostics.set(document.uri, lib.flagWarnings(current, all).map(w => {
+    diagnostics.set(document.uri, lib.flagWarnings(current, all, kernel).map(w => {
       const range = new vscode.Range(w.line, 0, w.line, document.lineAt(w.line).text.length);
       const warning = new vscode.Diagnostic(range, w.message, vscode.DiagnosticSeverity.Warning);
       warning.source = 'def-lang';
@@ -920,13 +992,17 @@ async function checkForUpdates(context, asked) {
 
 // ---- formatting a body in another language with VS Code's own formatter for it
 
-// def-lang's language names -> VS Code's language ids (the same as the coloring grammar's),
-// when a language's entry has no `editor` field
-const LANGUAGE_IDS = { js: 'javascript', shell: 'shellscript', bash: 'shellscript' };
-const languageId = language => (kernel && kernel.editors.get(language)) || LANGUAGE_IDS[language] || language;
-// ... and the file extension that gives a body document its language
-const EXTENSIONS = { html: 'html', css: 'css', javascript: 'js', js: 'js', json: 'json', python: 'py', sql: 'sql',
-  markdown: 'md', yaml: 'yaml', shell: 'sh', bash: 'sh' };
+// A def-lang language's VS Code language id: its entry's `editor` field (`python` is VS
+// Code's own); and the file extension VS Code gives that language, for a body's document
+const languageId = language => (kernel && kernel.editors.get(language)) || language;
+function extensionOf(id) {
+  for (const extension of vscode.extensions.all) {
+    for (const language of ((extension.packageJSON || {}).contributes || {}).languages || []) {
+      if (language.id === id && (language.extensions || []).length) return language.extensions[0].replace(/^\./, '');
+    }
+  }
+  return 'txt';
+}
 
 // Bodies being formatted, served read-only at def-lang-body:/N.EXT: a document there is
 // never an editor tab, can't be saved, and VS Code drops it when it's done.
@@ -944,7 +1020,7 @@ function serveBodies(context) {
 // null when there is none, or it changed nothing.
 async function formatBody(language, text, indent) {
   const id = languageId(language);
-  const path = `/${++bodyCount}.${EXTENSIONS[language] || EXTENSIONS[id] || 'txt'}`;
+  const path = `/${++bodyCount}.${extensionOf(id)}`;
   bodies.set(path, text);
   try {
     let document = await vscode.workspace.openTextDocument(vscode.Uri.from({ scheme: BODY_SCHEME, path }));
@@ -976,7 +1052,7 @@ async function embeddedDocument(document, position, language, index) {
   while (inBody(end + 1)) end++;
   const content = lines.map((line, n) => (n >= start && n <= end ? line : ' '.repeat(line.length))).join('\n');
   const id = languageId(language);
-  const path = `/${++bodyCount}.${EXTENSIONS[language] || EXTENSIONS[id] || 'txt'}`;
+  const path = `/${++bodyCount}.${extensionOf(id)}`;
   bodies.set(path, content);
   let embedded = await vscode.workspace.openTextDocument(vscode.Uri.from({ scheme: BODY_SCHEME, path }));
   if (embedded.languageId !== id) embedded = await vscode.languages.setTextDocumentLanguage(embedded, id);
