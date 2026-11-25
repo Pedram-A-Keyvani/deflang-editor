@@ -209,20 +209,25 @@ function definitionLine(line, kernel = kernelNames([])) {
 // language of an entry's `does in LANGUAGE`:
 // { kind, name, start, end }, or null.
 function kernelWordAt(line, column, kernel) {
+  return kernelWordsIn(line, kernel).find(w => w.start <= column && column < w.end) || null;
+}
+
+// Every kernel word of a line, as kernelWordAt finds them: [{ kind, name, start, end }].
+function kernelWordsIn(line, kernel) {
   const words = [];
-  // an entry's `does in LANGUAGE`: that language
+  // an entry's `does in LANGUAGE[FLAGS]`: that language, and its flags
   const does = /^(\s+does\s+in\s+)(\w+)(\[[^\]]*\])?\s*$/.exec(line);
   if (does) {
     const start = does[1].length;
-    if (column >= start && column < start + does[2].length) return { kind: 'language', name: does[2], start, end: start + does[2].length };
+    words.push({ kind: 'language', name: does[2], start, end: start + does[2].length });
     let at = start + does[2].length + 1;
     for (const piece of (does[3] || '[]').slice(1, -1).split(',')) {
       const first = piece.trim().split(/\s+/)[0];
       const from = at + piece.length - piece.trimStart().length;
-      if (first && column >= from && column < from + first.length) return { kind: 'flag', name: first, start: from, end: from + first.length };
+      if (first) words.push({ kind: 'flag', name: first, start: from, end: from + first.length });
       at += piece.length + 1;
     }
-    return null;
+    return words;
   }
   const definition = definitionLine(line, kernel);
   if (definition) {
@@ -237,7 +242,7 @@ function kernelWordAt(line, column, kernel) {
       at += m[0].length;
     }
   }
-  return words.find(w => w.start <= column && column < w.end) || null;
+  return words;
 }
 
 function escapeRegex(text) {
@@ -260,6 +265,7 @@ function readableToRegex(text, argumentName) {
   const restricted = new RegExp('^\\(' + escapeRegex(argumentName) + '\\d+:');
   const argument = new RegExp('^' + escapeRegex(argumentName) + '\\d+$');
   const tokens = []; // [isSymbol, regex, isArgument, kind]
+  const fixed = [];   // the fixed words as they are written: a line without one of them can't match
   let keywords = 0;
   let pos = 0;
   // each argument's place is a group, a0, a1, ... (the first time it appears)
@@ -292,6 +298,7 @@ function readableToRegex(text, argumentName) {
       const before = letter.test(word[0]) ? '(?<![\\p{L}\\p{N}_])' : '';
       const after = letter.test(word[word.length - 1]) ? '(?![\\p{L}\\p{N}_])' : '';
       tokens.push([!letter.test(word), before + '(?<k' + keywords++ + '>' + escapeRegex(word) + ')' + after, false]);
+      fixed.push(word);
     }
   }
   let source = '';
@@ -305,7 +312,7 @@ function readableToRegex(text, argumentName) {
   const edges = { leadingArgument: isArgument(tokens[0]), trailingArgument: isArgument(tokens[tokens.length - 1]) };
   // no fixed words at all (like the number-words def): the whole match counts, as whole words only,
   // so `ten` isn't found inside `written`
-  return keywords ? { source, keywords, ...edges }
+  return keywords ? { source, keywords, words: fixed, ...edges }
     : { source: '(?<![\\p{L}\\p{N}_])(?<k0>' + source + ')(?![\\p{L}\\p{N}_])', keywords: 0 };
 }
 
@@ -487,6 +494,8 @@ function inScope(file, scope) {
 
 // Every match of a def on a line, with greedy and with lazy arguments.
 function* matches(text, def) {
+  // a quick look first: a line without one of its fixed words can't match
+  if (def.words && !def.words.every(word => text.includes(word))) return;
   for (const regex of [def.regex, def.lazy]) {
     regex.lastIndex = 0;
     for (const m of text.matchAll(regex)) {
@@ -917,6 +926,135 @@ function libraryFoldersOf(owner) {
   };
   walk(owner);
   return found.filter(folder => !folder.startsWith(path.join(owner, 'libraries') + path.sep));
+}
+
+// ---- uses: Find All References, and the count above each definition and entry
+
+// What a use is a use of: 'def FILE:LINE' (a definition, by its first line; a statement
+// is the definition of its words, on its entry's line), 'language NAME', 'flag NAME',
+// 'modifier NAME', or 'file PATH'.
+function defId(file, line) {
+  return 'def ' + path.resolve(file) + ':' + line;
+}
+
+// The uses in one file: Map id -> [{ file, line, start, end }]. A phrase is a use of the
+// definition the editor reads it with, as hover and Ctrl+click do (scopes too); an
+// element's def="name" in an HTML body, of that def. Python bodies aren't read.
+function usesIn(index, indexes, kernel) {
+  const uses = new Map();
+  const add = (id, n, start, end) => {
+    if (!uses.has(id)) uses.set(id, []);
+    uses.get(id).push({ file: index.file, line: n, start, end });
+  };
+  const visible = visibleIndexes(index.file, indexes);
+  index.lines.forEach((text, n) => {
+    if (index.htmlLines.has(n)) {
+      for (const m of text.matchAll(/(?<![\w-])def="([^"]+)"/g)) {
+        const start = m.index + m[0].indexOf(m[1]);
+        for (const hit of findDefinitions(m[1], 0, visible)) add(defId(hit.file, hit.line), n, start, start + m[1].length);
+      }
+      return;
+    }
+    if (index.pythonLines.has(n) || index.commentLines.has(n) || !text.trim()) return;
+    // a definition line's modifiers, language and flags; modifiers in front of a line; `does in LANGUAGE[FLAGS]`
+    for (const w of kernelWordsIn(text, kernel)) add(w.kind + ' ' + w.name, n, w.start, w.end);
+    // the files of `use` and `in the scope of`
+    for (const [start, end, target] of findLinks(text, index.file, kernel)) add('file ' + path.resolve(target), n, start, end);
+    if (index.entryLines.has(n) || index.definitionLines.has(n)) return;
+    // the phrases, each with the definition it is read with: one use per definition and line
+    const scope = scopeAt(index, n);
+    const found = new Map();
+    for (const phrase of allPhrases(text, visible)) {
+      for (const hit of findDefinitions(text, phrase.start, visible, scope)) {
+        const id = defId(hit.file, hit.line);
+        const [start, end] = found.get(id) || [phrase.start, phrase.end];
+        found.set(id, [Math.min(start, phrase.start), Math.max(end, phrase.end)]);
+      }
+    }
+    for (const [id, [start, end]] of found) add(id, n, start, end);
+  });
+  return uses;
+}
+
+// What gets a count of its uses above it, in a file: [{ line, id }]: each definition (its
+// first line) and each entry.
+function countedIn(index) {
+  const items = new Map();
+  for (const d of index.defs) if (!d.alias && !d.statement) items.set(d.group ?? d.line, defId(index.file, d.group ?? d.line));
+  for (const e of index.entries) items.set(e.line, e.kind === 'statement' ? defId(index.file, e.line) : e.kind + ' ' + e.name);
+  return [...items].sort((a, b) => a[0] - b[0]).map(([line, id]) => ({ line, id }));
+}
+
+// What Find All References looks for, at `column` of line `n`: the id of a file a `use`
+// line names there, or null (the rest comes from what Ctrl+click finds).
+function fileIdAt(index, n, column, kernel) {
+  const link = findLinks(index.lines[n] || '', index.file, kernel).find(([start, end]) => start <= column && column < end);
+  return link ? 'file ' + path.resolve(link[2]) : null;
+}
+
+// Whether `line` gives the variable `name` a value (`name is ...`, `for each name in ...`),
+// also after modifiers (`shared visits is 0`).
+function givesValue(line, name, kernel) {
+  const modifiers = kernelWordsIn(line, kernel).filter(w => w.kind === 'modifier');
+  const rest = modifiers.length ? line.slice(modifiers[modifiers.length - 1].end).trimStart() : line;
+  return kernel.variableMakers.some(maker => maker.args.some(arg => argumentTexts(rest, maker, arg).some(text => variableOf(text) === name)));
+}
+
+// The uses of the variable `name` that line `n` of `index` reads: inside a definition's
+// body, when only that body gives it a value, the body's; otherwise those of the file it
+// belongs to (`owner`), and of the files that use it from there (`use NAME from FILE`,
+// `use NAME as OTHER from FILE`: under that name). [{ file, line, start, end }].
+function variableUses(name, owner, index, n, indexes, kernel) {
+  const found = [];
+  const scan = (at, local, from = 0, to = Infinity) => {
+    const visible = visibleIndexes(at.file, indexes);
+    const names = new Set([local]);
+    at.lines.forEach((text, k) => {
+      if (k < from || k > to) return;
+      if (at.htmlLines.has(k)) {
+        for (const m of text.matchAll(/\{(\w+)\}/g)) if (m[1] === local) found.push({ file: at.file, line: k, start: m.index + 1, end: m.index + 1 + local.length });
+        return;
+      }
+      if (at.pythonLines.has(k) || at.commentLines.has(k) || at.entryLines.has(k) || at.definitionLines.has(k)) return;
+      const phrases = phrasesIn(text, visible).map(([start, end]) => [start, end]);
+      for (const [start, end] of variablesIn(text, names, phrases)) found.push({ file: at.file, line: k, start, end });
+    });
+  };
+  // a definition's own: its body gives it a value, and no line of its file outside a body does
+  const owning = bodyOwner(index, n);
+  if (owning && !owning.language) {
+    const start = owning.group ?? owning.line;
+    let from = start + 1;
+    while (index.definitionLines.has(from)) from++;
+    const body = bodyOf(index, start);
+    const used = new RegExp('^use\\s+(?:.*[\\s,])?' + escapeRegex(name) + '(?:[\\s,].*)?\\s+from\\s');
+    const outside = index.lines.some(line => !/^\s/.test(line) && (givesValue(line, name, kernel) || used.test(line)));
+    if (body.some(line => givesValue(line, name, kernel)) && !outside) {
+      scan(index, name, from, from + body.length - 1);
+      return found;
+    }
+  }
+  const home = indexes.find(i => path.resolve(i.file) === path.resolve(owner)) || index;
+  scan(home, name);
+  for (const other of indexes) {
+    other.lines.forEach((line, k) => {
+      const m = /^use\s+(.+?)\s+from\s+(\S+)\s*$/.exec(line);
+      if (!m) return;
+      const target = resolveImport(m[2], other.file);
+      if (!target || path.resolve(target) !== path.resolve(home.file)) return;
+      for (const part of m[1].split(',')) {
+        const [theirs, mine] = part.trim().split(/\s+as\s+/).map(s => s.trim());
+        if (theirs !== name) continue;
+        if (mine) {
+          // `use visits as total from counter`: `visits` here, then `total` in this file
+          const at = line.indexOf(theirs, 4);
+          if (at >= 0) found.push({ file: other.file, line: k, start: at, end: at + theirs.length });
+        }
+        if (other !== home) scan(other, mine || theirs);
+      }
+    });
+  }
+  return found;
 }
 
 // Is `line` a def-lang comment (not a line inside a Python, HTML, ... body)?
@@ -1724,6 +1862,7 @@ function render(parts, formatted) {
 
 module.exports = {
   FLAG_HELP, LANGUAGE_HELP, RESERVED_HELP, isDefLanguage, reservedWordAt, argumentAt, flagAt, statementEffect, argumentTexts, flagWarnings, wrapsOnLine, kernelNames, definitionLine, kernelWordAt, findEntry, entryOn, replacementsOf, statementWordsIn,
+  kernelWordsIn, defId, usesIn, countedIn, fileIdAt, variableUses,
   indexText, findDefinitions, findVariable, findLinks, scopeAt, scopePlaces, sourceOf, headerOf, descriptionOf, splitDescription, readableToRegex,
   packageFolder, programFolder, libraryFolder, linkedFolders, libraryFoldersOf, listedLibraries, globalFolder, resolveImport, visibleIndexes, templateExpressionAt, wordAt, phrasesIn, defOrder, orderStarts, structureAt,
   completionsAt, defSnippet, patternParts, importNames, formatText, formatTextWith, bodyLanguageAt,

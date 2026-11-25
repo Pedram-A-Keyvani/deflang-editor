@@ -89,6 +89,14 @@ unless a `def-lang` alias is there already). Open a new terminal to use it.
   declares them, with its comment lines as its help. Where two files define the same
   phrase, they show the one in the line's scope (`in the scope of web/http`), as the
   interpreter reads it; the files named there lead to their files.
+- **Find All References** (Shift+F12; Shift+Alt+F12 for the References panel) lists
+  every use of what is under the cursor: a definition (from its definition line or any
+  use of it: program lines, def-lang bodies, `does in def` lines, HTML's
+  `def="name"`), a variable (in its file, and in the files that `use` it, under the
+  name they give it), an entry (a language, flag, modifier or statement), or a file
+  named by `use` or `in the scope of`. A line counts with the definition it is read
+  with, as on hover. Above each definition and entry, the number of its uses: a click
+  lists them (`def-lang.usesAbove` turns it off). Python bodies aren't read.
 - **Underlines** on hover show how a line is read: a def's fixed words solid, the
   parts that fill its arguments dashed.
 - **IntelliSense** offers the phrases a file's program can see, with Tab between the
@@ -123,6 +131,7 @@ unless a `def-lang` alias is there already). Open a new terminal to use it.
 | `def-lang.python` | the Python (3.11 or newer) that runs def-lang: `python3` (left at that, the one your `def-lang` alias names; `python` on Windows) |
 | `def-lang.checkForUpdates` | look for a newer def-lang on GitHub once a day (on by default) |
 | `def-lang.formatBodies` | Format Document formats bodies in other languages too (on by default) |
+| `def-lang.usesAbove` | the number of uses above each definition and entry; a click lists them (on by default) |
 | `def-lang.underline.wordColor` | color of the underline under a def's fixed words, `#rrggbb`: in `settings.json`, click its color box to pick one (a theme color id like `charts.blue` works too) |
 | `def-lang.underline.argumentColor` | color of the underline under the parts that fill a def's arguments |
 

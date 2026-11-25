@@ -98,6 +98,42 @@ function updateGrammar(declared) {
   }
 }
 
+// The uses in each file (lib.usesIn), kept until a .def file changes on disk (the cache
+// is made again then); a file whose text changed, like the one being edited, is read
+// again. Map id -> [{ file, line, start, end }], for the whole project.
+let usesCache = { base: null, files: new Map() };
+function usesOf(all) {
+  if (usesCache.base !== cache) usesCache = { base: cache, files: new Map() };
+  const total = new Map();
+  for (const index of all) {
+    const text = index.lines.join('\n');
+    let known = usesCache.files.get(index.file);
+    if (!known || known.text !== text) {
+      known = { text, uses: lib.usesIn(index, all, kernel) };
+      usesCache.files.set(index.file, known);
+    }
+    for (const [id, list] of known.uses) total.set(id, (total.get(id) || []).concat(list));
+  }
+  return total;
+}
+
+// Where the things of `ids` are declared, as uses: a definition's first line, an entry's line.
+function declarations(ids, all) {
+  const found = [];
+  for (const id of ids) {
+    const def = /^def (.+):(\d+)$/.exec(id);
+    const entry = /^(language|flag|modifier) (.+)$/.exec(id);
+    const places = def ? [{ file: def[1], line: Number(def[2]) }]
+      : entry ? all.flatMap(index => index.entries.filter(e => e.kind === entry[1] && e.name === entry[2]).map(e => ({ file: index.file, line: e.line }))) : [];
+    for (const place of places) {
+      const index = all.find(i => pathNode.resolve(i.file) === pathNode.resolve(place.file));
+      const text = index ? index.lines[place.line] || '' : '';
+      found.push({ ...place, start: text.length - text.trimStart().length, end: text.trimEnd().length });
+    }
+  }
+  return found;
+}
+
 // What is under the mouse: a phrase with its defs, or a variable with its first value.
 // In a .def file that is the whole line; in an HTML template of a package, the
 // def-lang inside {{ ... }}.
@@ -286,8 +322,9 @@ function activate(context) {
   const withTemplates = [selector, { language: 'html' }];
   const watcher = vscode.workspace.createFileSystemWatcher('**/*.def');
   const recolor = new vscode.EventEmitter();
-  const forget = () => { cache = null; recolor.fire(); };
-  context.subscriptions.push(recolor);
+  const recount = new vscode.EventEmitter(); // the counts of uses above the definitions
+  const forget = () => { cache = null; recolor.fire(); recount.fire(); };
+  context.subscriptions.push(recolor, recount);
   watcher.onDidChange(forget);
   watcher.onDidCreate(forget);
   watcher.onDidDelete(forget);
@@ -305,6 +342,60 @@ function activate(context) {
         return { originSelectionRange: found.range, targetUri: vscode.Uri.file(file), targetRange: target, targetSelectionRange: target };
       });
     }),
+  }));
+
+  // Find All References (Shift+F12, or Shift+Alt+F12 for the References panel): every use
+  // of the definition, entry, variable or file under the cursor, read as hover reads it
+  context.subscriptions.push(vscode.languages.registerReferenceProvider(selector, {
+    provideReferences: logged('references', async (document, position, options) => {
+      const all = await indexes(document);
+      const current = all.find(i => i.file === document.uri.fsPath);
+      if (!current) return [];
+      const ids = [];
+      let found = null;
+      const file = lib.fileIdAt(current, position.line, position.character, kernel);
+      if (file) ids.push(file);
+      else {
+        found = await lookup(document, position);
+        if (!found) return [];
+        const html = found.html;
+        if (found.hits) ids.push(...found.hits.map(h => lib.defId(h.file, h.line)));
+        else if (html && ['language', 'flag', 'modifier'].includes(html.kind)) ids.push(html.kind + ' ' + html.value);
+        else if (html && (html.kind === 'statement' || html.kind === 'def')) ids.push(...found.targets.map(t => lib.defId(t.file, t.line)));
+      }
+      let list;
+      if (found && found.found) list = lib.variableUses(found.name, found.found.file, current, position.line, all, kernel);
+      else {
+        const uses = usesOf(all);
+        list = ids.flatMap(id => uses.get(id) || []);
+        // and where it is declared: the definition's first line, or the entry's
+        if (options.includeDeclaration) list = declarations(ids, all).concat(list);
+      }
+      return list.map(use => new vscode.Location(vscode.Uri.file(use.file), new vscode.Range(use.line, use.start, use.line, use.end)));
+    }),
+  }));
+
+  // How many uses each definition and entry has, above it (def-lang.usesAbove); a click
+  // lists them, like Find All References
+  context.subscriptions.push(vscode.languages.registerCodeLensProvider(selector, {
+    onDidChangeCodeLenses: recount.event,
+    provideCodeLenses: logged('uses', async document => {
+      if (!vscode.workspace.getConfiguration('def-lang').get('usesAbove', true)) return [];
+      const all = await indexes(document);
+      const current = all.find(i => i.file === document.uri.fsPath);
+      if (!current) return [];
+      const uses = usesOf(all);
+      return lib.countedIn(current).map(({ line, id }) => {
+        const list = uses.get(id) || [];
+        const locations = list.map(use => new vscode.Location(vscode.Uri.file(use.file), new vscode.Range(use.line, use.start, use.line, use.end)));
+        const title = list.length === 1 ? '1 use' : (list.length || 'no') + ' uses';
+        return new vscode.CodeLens(new vscode.Range(line, 0, line, 0),
+          { title, command: 'editor.action.showReferences', arguments: [document.uri, new vscode.Position(line, 0), locations] });
+      });
+    }),
+  }));
+  context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
+    if (event.affectsConfiguration('def-lang.usesAbove')) recount.fire();
   }));
 
   context.subscriptions.push(vscode.languages.registerHoverProvider(withTemplates, {
