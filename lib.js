@@ -871,6 +871,7 @@ const KEY_HELP = {
   'start': '**start** phase: runs before the operation. Put scratch values in `self["cycle"]["state"][owner]` here; a name hook must register the name now, before the line runs.',
   'end': '**end** phase: runs after the operation succeeds, with the state from `start`. End and error hooks run in reverse order.',
   'error': '**error** phase: runs if the operation raises. The exception is in `self["cycle"]["error"]`, then it is re-raised.',
+  'self': '**self**: the interpreter a body runs in. `self.run(text)` runs def-lang, `self.say(value)` prints, and `self["…"]` is the tree it reads and changes. In a language\'s `does` body, `self["entry"]` is what the definition acts on: its `template`, `values`, `fill` and `body`.',
 };
 const HOOK_CYCLES = ['file', 'line', 'define', 'call', 'body', 'scope'];
 const HOOK_PHASES = ['start', 'end', 'error'];
@@ -999,10 +1000,39 @@ const PYTHON_KERNEL = [
 ];
 const KERNEL_HELP = Object.fromEntries(PYTHON_KERNEL);
 
+// What a language's `does` body acts on: self["entry"][FIELD] (README, Writing an Entry).
+const ENTRY_FIELDS = [
+  ['kind', 'kind', "'language', 'flag', 'modifier' or 'statement'."],
+  ['definition', 'definition', 'The definition the language, flag or modifier acts on.'],
+  ['template', 'template', "The definition's body, without its common indentation; argument places are marked in it."],
+  ['values', 'values', "The arguments, in order: their values, or their words for a definition that keeps them."],
+  ['fill', 'fill(${1:template}, ${2:values})', 'fill(template, values): the template with each argument place filled in with its value, as text.'],
+  ['body', 'body', "The template filled in with the values as text; the definition's value when a language's does ends, unless it gives back another."],
+  ['as written', 'as written', "True when the definition keeps its arguments' words."],
+  ['in place', 'in place', "True when the definition is an entry's does: it runs where the entry acts."],
+  ['name', 'name', 'The name after a modifier.'],
+  ['scope', 'scope', 'A list, empty at first, of the files or folders a statement makes read first for the rest of its does and the lines under it.'],
+];
+// What a hook cycle carries: self["cycle"][FIELD].
+const CYCLE_FIELDS = [
+  ['name', 'name', "The cycle: 'file', 'line', 'define', 'call', 'body' or 'scope'."],
+  ['phase', 'phase', "The phase: 'start', 'body', 'end' or 'error'."],
+  ['text', 'text', 'The text of the line or definition the cycle acts on.'],
+  ['definition', 'definition', 'The definition the cycle acts on, when there is one.'],
+  ['variable', 'variable', "On a define cycle for a name line, the name being defined; a definition line has 'definition' instead."],
+  ['file', 'file', 'The file the cycle runs in.'],
+  ['owner', 'owner', 'The entry whose hook is running: file/name, like local_time/timed.'],
+  ['state', 'state', 'Scratch space for one hook to pass values from start to end: self["cycle"]["state"][owner].'],
+  ['error', 'error', 'The exception in an error phase, then re-raised.'],
+  ['depth', 'depth', 'How many calls of this cycle are open.'],
+];
+
 // Known values in a hook body, and what their fields are. `DEFINITION` is the
 // definition from `self["cycle"]["definition"]`; its modes are what a compiled
 // build keeps, so a library sets those rather than relying on a local function.
 const PYTHON_OBJECTS = {
+  ENTRY: ENTRY_FIELDS,
+  CYCLE: CYCLE_FIELDS,
   DEFINITION: [
     ['visibility', 'visibility', "'everywhere' (the default) or 'file'. A compiled build restores `seen_by` from this, so set it as well as `seen_by`."],
     ['seen_by', 'seen_by', 'A function `file → bool`: whether a line read from `file` may use this definition. File-only visibility is `lambda file: file == DEFINITION.file`; set `visibility` too for compiled builds.'],
@@ -1028,17 +1058,61 @@ const PYTHON_OBJECTS = {
   ],
 };
 
-// The known field under the cursor in `DEFINITION.visibility`, or null.
+// The known field under the cursor in `DEFINITION.visibility` or `ENTRY["body"]`, or null.
 function objectFieldAt(line, column) {
   for (const [name, fields] of Object.entries(PYTHON_OBJECTS)) {
-    const re = new RegExp('\\b' + name + '\\s*\\.\\s*(\\w+)', 'g');
-    for (const m of line.matchAll(re)) {
-      const field = m[1];
-      const start = m.index + m[0].lastIndexOf(field);
-      if (start <= column && column < start + field.length) {
-        return { object: name, field, start, end: start + field.length,
-          documentation: (fields.find(f => f[0] === field) || [])[2] };
+    for (const [re, quoted] of [
+      [new RegExp('\\b' + escapeRegex(name) + '\\s*\\.\\s*(\\w+)', 'g'), false],
+      [new RegExp('\\b' + escapeRegex(name) + '\\s*\\[\\s*(["\'])([^"\']+)\\1\\s*\\]', 'g'), true],
+    ]) {
+      for (const m of line.matchAll(re)) {
+        const field = m[quoted ? 2 : 1];
+        const start = m.index + m[0].lastIndexOf(field);
+        if (start <= column && column < start + field.length) {
+          return { object: name, field, start, end: start + field.length,
+            label: quoted ? `${name}["${field}"]` : `${name}.${field}`,
+            documentation: (fields.find(f => f[0] === field) || [])[2] };
+        }
       }
+    }
+  }
+  return null;
+}
+
+// A field under the cursor in `self["entry"]["body"]` or `self["cycle"]["state"]`.
+function selfFieldAt(line, column) {
+  const re = /\bself\s*\[\s*(["'])([^"']+)\1\s*\]\s*\[\s*(["'])([^"']+)\3\s*\]/g;
+  for (const m of line.matchAll(re)) {
+    const object = m[2];
+    const fields = object === 'entry' ? ENTRY_FIELDS : object === 'cycle' ? CYCLE_FIELDS : null;
+    if (!fields) continue;
+    const field = m[4];
+    const second = m[0].indexOf('[', m[0].indexOf(']') + 1);
+    const start = m.index + m[0].indexOf(field, second);
+    if (start <= column && column < start + field.length) {
+      return { object: `self["${object}"]`, field, start, end: start + field.length,
+        label: `self["${object}"]["${field}"]`,
+        documentation: (fields.find(f => f[0] === field) || [])[2] };
+    }
+  }
+  return null;
+}
+
+// The bare `self` under the cursor in a Python body, before or after its keys.
+function pythonSelfAt(line, column) {
+  // `self` inside text is text, not the interpreter.
+  let quote = null;
+  for (let i = 0; i < column; i++) {
+    const ch = line[i];
+    if (quote) {
+      if (ch === '\\') i++;
+      else if (ch === quote) quote = null;
+    } else if (ch === '"' || ch === "'") quote = ch;
+  }
+  if (quote) return null;
+  for (const m of line.matchAll(/\bself\b/g)) {
+    if (m.index <= column && column < m.index + m[0].length) {
+      return { start: m.index, end: m.index + m[0].length };
     }
   }
   return null;
@@ -1063,10 +1137,17 @@ const PYTHON_HELPERS = [
   ['Code', 'Code(${1:text})', 'Marks text as code, so another language puts it in without escaping it.'],
   ['DefException', 'DefException(${1:message})', 'Raise it to stop with a def-lang error.'],
 ];
+// A language's `does` body works on self["entry"]; these replace the old BODY/VAR/fill
+// names, which the interpreter no longer gives to a body.
 const LANGUAGE_HELPERS = [
-  ['BODY', 'BODY', "The def's body text."],
-  ['VAR', 'VAR', 'The argument values, as a list.'],
-  ['fill', 'fill(${1:BODY}, ${2:values})', 'BODY with values put where A0, A1, ... are.'],
+  ['self["entry"]', 'self["entry"]', 'What the definition acts on: its kind, definition, template, values, fill, body and flags.'],
+  ['self["entry"]["definition"]', 'self["entry"]["definition"]', 'The definition whose body is running.'],
+  ['self["entry"]["template"]', 'self["entry"]["template"]', "The definition's body, with argument places marked in it."],
+  ['self["entry"]["values"]', 'self["entry"]["values"]', 'The argument values, in order (or their words for a def that keeps them).'],
+  ['self["entry"]["fill"]', 'self["entry"]["fill"](${1:template}, ${2:values})', 'Fills the argument places in a template with values, as text.'],
+  ['self["entry"]["body"]', 'self["entry"]["body"]', 'The template filled in with the values; the definition’s value unless its does gives another.'],
+  ['self["entry"]["as written"]', 'self["entry"]["as written"]', "True when the definition keeps its arguments' words."],
+  ['self["entry"]["in place"]', 'self["entry"]["in place"]', "True when an entry's does runs where it acts, in the caller's variables."],
 ];
 
 const snippetText = text => text.replace(/[$}\\]/g, ch => '\\' + ch);
@@ -1200,6 +1281,25 @@ function completionsAt(index, n, column, indexes, languages = new Set(['python']
       for (const [label, insert, doc] of fields) add('python', label, insert, doc, { sort: '0', start });
       return items;
     }
+    // `self["entry"]["FIELD"]` / `self["cycle"]["FIELD"]`, or `ENTRY["FIELD"]`
+    const nested = /\bself\s*\[\s*(['"])(entry|cycle)\1\s*\]\s*\[\s*(['"]?[^'"\]]*)$/.exec(before);
+    const bracket = nested || /\b(\w+)\s*\[\s*(['"]?[^'"\]]*)$/.exec(before);
+    if (bracket) {
+      const object = nested ? nested[2] : bracket[1];
+      const fields = nested ? (object === 'entry' ? ENTRY_FIELDS : CYCLE_FIELDS)
+        : Object.prototype.hasOwnProperty.call(PYTHON_OBJECTS, object) ? PYTHON_OBJECTS[object] : null;
+      if (fields) {
+        const quote = (nested ? nested[3] : bracket[2]) || '';
+        const after = line.slice(column);
+        const keyStart = column - (/[^'"\]\s]*$/.exec(before)?.[0].length || 0);
+        for (const [label, , doc] of fields) {
+          let insert = quote ? label + quote : `"${label}"`;
+          if (!/^\s*(?:['"])?\s*\]/.test(after)) insert += ']';
+          add('python', label, insert, doc, { sort: '0', start: keyStart });
+        }
+        return items;
+      }
+    }
     // `self["KEY"]`: the kernel's tree (entry bodies use these more than methods)
     if (/\bself\[\s*(?:['"]?\w*)$/.test(before)) {
       const quote = /self\[\s*(['"])/.exec(before)?.[1] || '';
@@ -1216,7 +1316,8 @@ function completionsAt(index, n, column, indexes, languages = new Set(['python']
       for (const [label, insert, doc] of PYTHON_SELF) add('python', label, insert, doc);
       return items;
     }
-    if (/["'][^"']*$/.test(before)) return [];
+    // an open text has no def-lang completions; a finished ["key"] does
+    if ((before.match(/"/g) || []).length % 2 || (before.match(/'/g) || []).length % 2) return [];
     for (const [label, insert, doc] of PYTHON_HELPERS) add('python', label, insert, doc);
     if (owner && owner.language === true) for (const [label, insert, doc] of LANGUAGE_HELPERS) add('python', label, insert, doc);
     else if (owner) for (const p of patternParts(owner.pattern, owner.argumentName)) if (p.argument) add('variable', p.argument, p.argument, 'An argument of this def: its value' + (owner.flags.has('as written') ? ', as written (its words)' : ''), { sort: '0' });
@@ -1235,6 +1336,12 @@ function completionsAt(index, n, column, indexes, languages = new Set(['python']
     return items;
   }
   if (/^def\s/.test(text)) return [];
+  // the body language of an entry, or of one of its hooks: every declared language
+  if (/^does\s+in\s+\w*$/.test(text) || /^hook\s+(?:\w+\s+){2}in\s+\w*$/.test(text)) {
+    const start = before.length - text.length + text.search(/\w*$/);
+    for (const name of languages) add('language', name, name, `The body is written in ${name}.`, { sort: '2', start });
+    return items;
+  }
   if (/^use\s+\S*$/.test(text) || /^use\s+.+\s+from\s+\S*$/.test(text)) {
     for (const name of importNames(index.file)) add('import', name, name, '', { detail: 'use' });
     return items;
@@ -1390,7 +1497,7 @@ function render(parts, formatted) {
 }
 
 module.exports = {
-  FLAG_HELP, flagAt, KEY_HELP, keyAt, KERNEL_HELP, selfKeyAt, PYTHON_OBJECTS, objectFieldAt, flagWarnings, wrapsOnLine,
+  FLAG_HELP, flagAt, KEY_HELP, keyAt, KERNEL_HELP, selfKeyAt, selfFieldAt, pythonSelfAt, PYTHON_OBJECTS, objectFieldAt, flagWarnings, wrapsOnLine,
   indexText, findDefinitions, findEntry, findVariable, findLinks, sourceOf, headerOf, descriptionOf, splitDescription, readableToRegex,
   packageFolder, programFolder, libraryFolder, linkedFolders, listedLibraries, globalFolder, resolveImport, visibleIndexes, templateExpressionAt, wordAt, phrasesIn, defOrder, orderStarts, structureAt,
   completionsAt, defSnippet, patternParts, importNames, formatText, formatTextWith, bodyLanguageAt,

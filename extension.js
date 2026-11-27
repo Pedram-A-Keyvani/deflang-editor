@@ -259,17 +259,25 @@ function activate(context) {
           lib.languageNames([...texts.values(), document.getText()]));
       if (flag) return new vscode.Hover(new vscode.MarkdownString(lib.FLAG_HELP[flag.flag]),
         new vscode.Range(position.line, flag.start, position.line, flag.end));
-      // a kernel key in a Python body (`self["cycle"]`), including hook bodies
+      // self, its keys and their fields in a Python body, including a language's does
       if (document.languageId === 'def-lang' && current && current.pythonLines.has(position.line)) {
-        const selfKey = lib.selfKeyAt(document.lineAt(position.line).text, position.character);
+        const bodyLine = document.lineAt(position.line).text;
+        const selfField = lib.selfFieldAt(bodyLine, position.character);
+        if (selfField && selfField.documentation) return new vscode.Hover(
+          new vscode.MarkdownString(`**${selfField.label}**: ${selfField.documentation}`),
+          new vscode.Range(position.line, selfField.start, position.line, selfField.end));
+        const selfKey = lib.selfKeyAt(bodyLine, position.character);
         if (selfKey && lib.KERNEL_HELP[selfKey.key]) return new vscode.Hover(
           new vscode.MarkdownString(`**self["${selfKey.key}"]**: ${lib.KERNEL_HELP[selfKey.key]}`),
           new vscode.Range(position.line, selfKey.start, position.line, selfKey.end));
-        // a field of a known hook value (`DEFINITION.visibility`, `DEFINITION.seen_by`)
-        const member = lib.objectFieldAt(document.lineAt(position.line).text, position.character);
+        // a field of a known value (`DEFINITION.visibility`, `ENTRY["body"]`)
+        const member = lib.objectFieldAt(bodyLine, position.character);
         if (member && member.documentation) return new vscode.Hover(
-          new vscode.MarkdownString(`**${member.object}.${member.field}**: ${member.documentation}`),
+          new vscode.MarkdownString(`**${member.label}**: ${member.documentation}`),
           new vscode.Range(position.line, member.start, position.line, member.end));
+        const atSelf = lib.pythonSelfAt(bodyLine, position.character);
+        if (atSelf) return new vscode.Hover(new vscode.MarkdownString(lib.KEY_HELP.self),
+          new vscode.Range(position.line, atSelf.start, position.line, atSelf.end));
       }
       const found = await lookup(document, position);
       if (!found) return document.languageId === 'def-lang' ? embeddedHover(document, position) : undefined;

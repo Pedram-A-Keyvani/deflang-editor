@@ -81,17 +81,21 @@ unless a `def-lang` alias is there already). Open a new terminal to use it.
   They also work on variables, on the file after `use`, on entry names (`shared`
   in `shared port is 8000`), on flags (`as written`, `regex`), on a language name
   after `def`, and on the language's own keys: entry kinds, fields (`does`, `hook`,
-  `words`, …), hook cycles and phases (`define`, `end`, …), and `self["…"]` in a
-  Python body (`self["cycle"]`, `self["entry"]`, …), including `DEFINITION.visibility`
-  and `DEFINITION.seen_by` in a hook.
+  `words`, …), hook cycles and phases (`define`, `end`, …), `self` itself, and
+  `self["…"]` in a Python body (`self["cycle"]`, `self["entry"]`,
+  `self["entry"]["body"]`, …), including `DEFINITION.visibility` and
+  `DEFINITION.seen_by` in a hook.
 - **Underlines** on hover show how a line is read: a def's fixed words solid, the
   parts that fill its arguments dashed.
 - **IntelliSense** offers the phrases a file's program can see, with Tab between the
   arguments (`repeat ▮ times : ▯`), and also variables, statements, flags, files after
-  `use`, and in a Python body what `self.`, `self["…"]` and `DEFINITION.` give (so
-  `visibility` and `seen_by` are offered in a hook). It works in a `def`, `does` or
-  `hook` body. A library topic file also sees its collection's `core`, so authoring
-  `deflang-lib/errors/main.def` has the same words as a program that uses `core`.
+  `use`, and the languages a `does in` or `hook … in` line may name. In a Python body
+  it offers what `self.`, `self["…"]`, `self["entry"]["…"]` and `DEFINITION.` give:
+  `visibility` and `seen_by` in a hook, and a language's `does` gets
+  `self["entry"]["template"]`, `["values"]`, `["fill"]` and `["body"]`. It works in a
+  `def`, `does` or `hook` body. A library topic file also sees its collection's
+  `core`, so authoring `deflang-lib/errors/main.def` has the same words as a program
+  that uses `core`.
 - **Errors** are underlined in red as you type: unknown names, files that can't be
   found, a missing closing quote, a Python syntax error, and more. They come from the
   interpreter, which reads the program without running it.
@@ -109,7 +113,8 @@ unless a `def-lang` alias is there already). Open a new terminal to use it.
 - **Inside a body in another language**, hover and IntelliSense are that language's,
   as in a `.html`, `.css` or `.js` file: tag and property help, completions, and so
   on. Python's need a Python extension; in a Python body, def-lang's own helpers
-  (`self.`, `as_text`, …) are offered too.
+  (`self.`, `self["entry"][…]`, `as_text`, …) are offered too, also under a language
+  declared in a `.def` file.
 
 ## Settings
 
