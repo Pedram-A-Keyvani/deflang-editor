@@ -90,7 +90,8 @@ unless a `def-lang` alias is there already). Open a new terminal to use it.
   arguments (`repeat ▮ times : ▯`), and also variables, statements, flags, files after
   `use`, and in a Python body what `self.`, `self["…"]` and `DEFINITION.` give (so
   `visibility` and `seen_by` are offered in a hook). It works in a `def`, `does` or
-  `hook` body.
+  `hook` body. A library topic file also sees its collection's `core`, so authoring
+  `deflang-lib/errors/main.def` has the same words as a program that uses `core`.
 - **Errors** are underlined in red as you type: unknown names, files that can't be
   found, a missing closing quote, a Python syntax error, and more. They come from the
   interpreter, which reads the program without running it.

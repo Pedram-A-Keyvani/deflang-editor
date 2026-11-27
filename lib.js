@@ -348,7 +348,16 @@ function visibleIndexes(file, indexes) {
 // project's init.def, then the file itself.
 function orderStarts(file) {
   const home = packageFolder(file);
-  return [home && path.join(home, 'main.def'), resolveImport('core', file), file].filter(Boolean);
+  const starts = [home && path.join(home, 'main.def'), resolveImport('core', file), file].filter(Boolean);
+  // A library topic (`deflang-lib/errors/main.def`) is its own engine program, but
+  // while authoring it the editor should see the collection's words: its sibling
+  // `core` library, which uses every topic. Otherwise the only visible defs are the
+  // topic and the libraries its own libraries.toml lists.
+  if (home && fs.existsSync(path.join(home, 'library.toml'))) {
+    const core = path.join(path.dirname(home), 'core', 'main.def');
+    if (fs.existsSync(core)) starts.push(core);
+  }
+  return [...new Set(starts)];
 }
 
 // How loose a def binds by itself: the order it was made in (earlier is looser).
