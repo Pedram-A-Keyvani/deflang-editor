@@ -20,6 +20,8 @@ LANGUAGES = {  # flag word -> (VS Code grammar scope, VS Code language id)
     "yaml": ("source.yaml", "yaml"),
 }
 FLAG = r"(?:as\s+written|regex|" + "|".join(LANGUAGES) + ")"
+CYCLES = r"(?:file|line|define|call|body|scope)"
+PHASES = r"(?:start|end|error)"
 NUMBER_WORDS = ("zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen "
                 "fifteen sixteen seventeen eighteen nineteen twenty thirty forty fifty sixty seventy "
                 "eighty ninety hundred thousand million billion").split()
@@ -64,6 +66,25 @@ def body_rule(name, scope):
     }
 
 
+def hook_rule(name, scope):
+    """hook CYCLE PHASE in NAME: the indented body below is written in that language.
+    `\1` is the field's own indent, so the next field at the same level ends the body."""
+    inner = ([VIEW_TAG] if name == "html" else []) + [{"include": scope}]
+    return {
+        "name": f"meta.hook.{name}.def",
+        "begin": rf"^(\s*)(hook)\s+({CYCLES})\s+({PHASES})\s+in\s+({name})(\[[^\]]*\])?\s*$",
+        "beginCaptures": {
+            "2": {"name": "storage.type.def.def"},
+            "3": {"name": "keyword.control.def"},
+            "4": {"name": "keyword.control.def"},
+            "5": {"name": "storage.modifier.def"},
+            "6": {"patterns": [{"include": "#flags"}]},
+        },
+        "end": r"^(?=\1\S|\S)",
+        "patterns": [{"name": f"meta.embedded.block.{name}", "begin": r"^(?=[ \t])", "end": r"^(?=\S)", "patterns": inner}],
+    }
+
+
 grammar = {
     "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
     "name": "def-lang",
@@ -72,6 +93,7 @@ grammar = {
         # no comment rule: a file's comment marker can change (`comment is #`), so
         # comments are coloured by the extension, which knows the marker of each line
         {"include": "#language-line"},
+        *[{"include": f"#hook-{name}-line"} for name in LANGUAGES],
         *[{"include": f"#{name}-def"} for name in LANGUAGES],
         {"include": "#def"},
         {"include": "#statement"},
@@ -90,6 +112,7 @@ grammar = {
                           "patterns": [{"include": "source.python"}]}],
         },
         **{f"{name}-def": body_rule(name, scope) for name, (scope, _) in LANGUAGES.items()},
+        **{f"hook-{name}-line": hook_rule(name, scope) for name, (scope, _) in LANGUAGES.items()},
 
         # def ... : the indented body below is def-lang (handled by the top-level patterns)
         "def": {
@@ -209,7 +232,9 @@ def check(node):
     if isinstance(node, dict):
         for key in ("match", "begin", "end"):
             if key in node:
-                re.compile(node[key])
+                # an `end` can use its rule's `begin` indent through \1: give Python's
+                # standalone compile a capture to refer to
+                re.compile((r"(.*)" if key == "end" else "") + node[key])
         for value in node.values():
             check(value)
     elif isinstance(node, list):
@@ -223,8 +248,8 @@ package_path = Path(__file__).parent / "package.json"
 package = json.loads(package_path.read_text())
 package["contributes"]["grammars"][0]["embeddedLanguages"] = {
     f"meta.embedded.block.{name}": language for name, (_, language) in LANGUAGES.items()}
-package_path.write_text(json.dumps(package, indent=2) + "\n")
+package_path.write_text(json.dumps(package, indent=2, ensure_ascii=False) + "\n")
 
 path = Path(__file__).parent / "syntaxes" / "def.tmLanguage.json"
-path.write_text(json.dumps(grammar, indent=2) + "\n")
+path.write_text(json.dumps(grammar, indent=2, ensure_ascii=False) + "\n")
 print("wrote", path)

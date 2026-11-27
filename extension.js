@@ -118,10 +118,19 @@ async function lookup(document, position) {
     };
   }
 
-  const word = lib.wordAt(text, position.character - shift);
+  const column = position.character - shift;
+  const word = lib.wordAt(text, column);
   if (!word) return null;
-  const found = lib.findVariable(word.text, document.uri.fsPath, visible);
   const wordRange = range(word.start, word.start + word.text.length);
+  // a modifier or statement in use (`shared port is 8000`), or an entry's own name:
+  // point at the `modifier shared` / `statement comment` that declares it
+  const atStart = !text.slice(0, word.start).trim();
+  const declaration = /^(language|flag|modifier|statement)\s+\w+$/.test(text);
+  if (document.languageId === 'def-lang' && (atStart || declaration)) {
+    const entries = lib.findEntry(word.text, document.uri.fsPath, visible);
+    if (entries.length) return { all, hits: entries, range: wordRange, solid: [wordRange], dotted: [] };
+  }
+  const found = lib.findVariable(word.text, document.uri.fsPath, visible);
   return found ? { all, found, name: word.text, range: wordRange, solid: [wordRange], dotted: [] } : null;
 }
 
@@ -234,12 +243,34 @@ function activate(context) {
   context.subscriptions.push(vscode.languages.registerHoverProvider(withTemplates, {
     provideHover: logged('hover', async (document, position) => {
       clearUnderline();
+      const all = document.languageId === 'def-lang' ? await indexes(document) : [];
+      const current = all.find(i => i.file === document.uri.fsPath);
+      const ownLine = !current || (!lib.isComment(current, position.line) &&
+        !current.pythonLines.has(position.line) && !current.htmlLines.has(position.line));
+      // a language key (an entry kind, a field, or a cycle/phase in a hook): its own help
+      if (document.languageId === 'def-lang' && ownLine) {
+        const key = lib.keyAt(document.lineAt(position.line).text, position.character);
+        if (key) return new vscode.Hover(new vscode.MarkdownString(lib.KEY_HELP[key.key]),
+          new vscode.Range(position.line, key.start, position.line, key.end));
+      }
       // a flag on a def line (as written, regex): what it means and when to use it
       const flag = document.languageId === 'def-lang' && /^def\s/.test(document.lineAt(position.line).text) &&
-        (await indexes(document), lib.flagAt(document.lineAt(position.line).text, position.character,
-          lib.languageNames([...texts.values(), document.getText()])));
+        lib.flagAt(document.lineAt(position.line).text, position.character,
+          lib.languageNames([...texts.values(), document.getText()]));
       if (flag) return new vscode.Hover(new vscode.MarkdownString(lib.FLAG_HELP[flag.flag]),
         new vscode.Range(position.line, flag.start, position.line, flag.end));
+      // a kernel key in a Python body (`self["cycle"]`), including hook bodies
+      if (document.languageId === 'def-lang' && current && current.pythonLines.has(position.line)) {
+        const selfKey = lib.selfKeyAt(document.lineAt(position.line).text, position.character);
+        if (selfKey && lib.KERNEL_HELP[selfKey.key]) return new vscode.Hover(
+          new vscode.MarkdownString(`**self["${selfKey.key}"]**: ${lib.KERNEL_HELP[selfKey.key]}`),
+          new vscode.Range(position.line, selfKey.start, position.line, selfKey.end));
+        // a field of a known hook value (`DEFINITION.visibility`, `DEFINITION.seen_by`)
+        const member = lib.objectFieldAt(document.lineAt(position.line).text, position.character);
+        if (member && member.documentation) return new vscode.Hover(
+          new vscode.MarkdownString(`**${member.object}.${member.field}**: ${member.documentation}`),
+          new vscode.Range(position.line, member.start, position.line, member.end));
+      }
       const found = await lookup(document, position);
       if (!found) return document.languageId === 'def-lang' ? embeddedHover(document, position) : undefined;
       const text = new vscode.MarkdownString();

@@ -74,16 +74,23 @@ unless a `def-lang` alias is there already). Open a new terminal to use it.
 
 - **Colours** for comments, `def` lines and their flags, arguments, text, numbers,
   variables and the phrases of your defs. Bodies in another language (Python, HTML,
-  CSS, JavaScript, …) are coloured in that language.
-- **Hover and Ctrl+click** (or F12) on a phrase go to its `def` and show its
-  description: the comment lines right above the def. They also work on variables,
-  on the file after `use`, on flags (`as written`, `regex`) and on a language name
-  after `def`.
+  CSS, JavaScript, …), including `hook` bodies, are coloured in that language.
+- **Hover and Ctrl+click** (or F12) on a phrase go to its definition and show its
+  description: the comment lines right above it. That covers `def` lines and the
+  language-prefixed ones (`python[written] A0 is A1`), so `is` and `say` work too.
+  They also work on variables, on the file after `use`, on entry names (`shared`
+  in `shared port is 8000`), on flags (`as written`, `regex`), on a language name
+  after `def`, and on the language's own keys: entry kinds, fields (`does`, `hook`,
+  `words`, …), hook cycles and phases (`define`, `end`, …), and `self["…"]` in a
+  Python body (`self["cycle"]`, `self["entry"]`, …), including `DEFINITION.visibility`
+  and `DEFINITION.seen_by` in a hook.
 - **Underlines** on hover show how a line is read: a def's fixed words solid, the
   parts that fill its arguments dashed.
 - **IntelliSense** offers the phrases a file's program can see, with Tab between the
   arguments (`repeat ▮ times : ▯`), and also variables, statements, flags, files after
-  `use`, and in a Python body what `self.` gives.
+  `use`, and in a Python body what `self.`, `self["…"]` and `DEFINITION.` give (so
+  `visibility` and `seen_by` are offered in a hook). It works in a `def`, `does` or
+  `hook` body.
 - **Errors** are underlined in red as you type: unknown names, files that can't be
   found, a missing closing quote, a Python syntax error, and more. They come from the
   interpreter, which reads the program without running it.

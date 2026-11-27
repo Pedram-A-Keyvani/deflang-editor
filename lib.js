@@ -6,6 +6,12 @@ const path = require('path');
 
 const FLAG = /^(as\s+written|regex)\s+/;
 const LANGUAGE_LINE = /^language\s+(\w+)\s*$/;
+// Fields of an entry (a `language`, `flag`, `modifier` or `statement`). `does` and
+// `hook` can hold a body in another language, like a def's line can.
+const ENTRY_FIELD = /^(does|hook|words|editor|reading|replaces)\b/;
+const DOES_FIELD = /^does\s+in\s+(\w+)(?:\[[^\]]*\])?\s*$/;
+const HOOK_FIELD = /^hook\s+(\w+)\s+(\w+)\s+in\s+(\w+)(?:\[[^\]]*\])?\s*$/;
+const ENTRY_LINE = /^(language|flag|modifier|statement)\s+(\w+)\s*$/;
 
 // The languages declared with `language NAME` in these texts, plus Python (built in).
 function languageNames(texts) {
@@ -16,6 +22,39 @@ function languageNames(texts) {
 
 function escapeRegex(text) {
   return text.replace(/[.*+?^${}()|[\]\\/-]/g, '\\$&');
+}
+
+function addFlag(flags, text) {
+  for (const word of text.split(/[\s,]+/)) {
+    if (word) flags.add(word === 'written' ? 'as written' : word);
+  }
+}
+
+// `def say A0`, `python[written] A0 is A1`, `html greeting A0`: a definition line
+// starts with its language (def is one), then flags in brackets or as words, then
+// the pattern. The old reader only found lines starting with the word `def`.
+function parseDefinitionLine(line, languages) {
+  const known = new Set(['def', ...languages]);
+  const names = [...known].sort((a, b) => b.length - a.length);
+  const start = new RegExp('^(' + names.map(escapeRegex).join('|') + ')(\\[[^\\]]*\\])?(?=\\s)').exec(line);
+  if (!start) return null;
+  let language = start[1];
+  const flags = new Set();
+  if (start[2]) addFlag(flags, start[2].slice(1, -1));
+  let rest = line.slice(start[0].length).trim();
+  let flag;
+  // `def python as written X`: `def` is the language keyword, `python` its body's language
+  if (language === 'def' && (flag = /^(\w+)\s+/.exec(rest)) && known.has(flag[1])) {
+    language = flag[1];
+    rest = rest.slice(flag[0].length).trim();
+  }
+  while ((flag = FLAG.exec(rest))) {
+    addFlag(flags, flag[1]);
+    rest = rest.slice(flag[0].length).trim();
+  }
+  if (!rest) return null;
+  flags.add(language);
+  return { language, flags, pattern: rest };
 }
 
 function closingParen(text, start) {
@@ -96,9 +135,11 @@ function compile(made) {
   } catch { return null; }
 }
 
-// Everything a file defines: def lines, `X means Y` lines, and which lines are Python.
+// Everything a file defines: def lines in any language, entries, `X means Y`
+// lines, and which lines are bodies in another language.
 function indexText(file, text, languages = languageNames([text])) {
   const defs = [];
+  const entries = [];
   const lines = text.split(/\r?\n/);
   let argumentName = 'A';
   // `comment is X` makes X the comment marker from that line to the end of the file,
@@ -106,18 +147,38 @@ function indexText(file, text, languages = languageNames([text])) {
   let comment = '//';
   const commentLines = new Map(); // comment line -> its marker
   let inPython = false;
-  let inHtml = null;           // the def line of the HTML body being read
+  let inHtml = null;           // the def or field line of the HTML body being read
+  let entryBody = null;        // the entry field whose body is being read
   const pythonLines = new Set(); // lines in another language: Python or HTML bodies
-  const htmlLines = new Map();   // HTML body line -> its def line
+  const htmlLines = new Map();   // HTML body line -> its def or field line
+  const entryBodies = new Map(); // body line -> its `does`/`hook` field
   const languageLines = [];      // { name, line } of each `language NAME`
   const sequence = []; // ['import', file] (a `use` line) and ['def', group] in file order, for defOrder()
   let group = null;    // first line of the def group being written, until its body starts
   lines.forEach((line, number) => {
     if (/^\s/.test(line) && line.trim()) {
-      if (inPython) pythonLines.add(number);
+      const text = line.trim();
+      if (ENTRY_FIELD.test(text)) {
+        // a field starts its own body; a sibling field ends the one before it
+        const does = DOES_FIELD.exec(text);
+        const hook = HOOK_FIELD.exec(text);
+        const language = does ? does[1] : hook ? hook[3] : null;
+        inPython = language !== null && language !== 'def';
+        inHtml = language === 'html' ? number : null;
+        entryBody = language === null ? null : {
+          language, pattern: '', argumentName, flags: new Set(),
+          field: text, cycle: hook && hook[1], phase: hook && hook[2],
+        };
+        group = null;
+        return;
+      }
+      if (inPython) {
+        pythonLines.add(number);
+        if (entryBody) entryBodies.set(number, entryBody);
+      }
       if (inHtml !== null) htmlLines.set(number, inHtml);
       // like the engine: an indented comment is a comment, except inside a Python/HTML body
-      else if (!inPython && line.trim().startsWith(comment)) commentLines.set(number, comment);
+      else if (!inPython && text.startsWith(comment)) commentLines.set(number, comment);
       group = null;
       return;
     }
@@ -125,27 +186,22 @@ function indexText(file, text, languages = languageNames([text])) {
     if (line.trim().startsWith(comment)) { commentLines.set(number, comment); return; }
     inPython = false;
     inHtml = null;
+    entryBody = null;
     let m;
-    if (!/^def\s/.test(line)) group = null;
+    const parsed = parseDefinitionLine(line, languages);
+    if (!parsed) group = null;
     // `use FILE`, or `use NAMES from FILE`: either way FILE runs
     if ((m = /^use\s+(.+?)\s*$/.exec(line))) { const from = /\s+from\s+(\S+)$/.exec(m[1]); sequence.push(['import', from ? from[1] : m[1]]); return; }
     // `language NAME`: its body is the Python that runs that language
     if ((m = LANGUAGE_LINE.exec(line))) { languageLines.push({ name: m[1], line: number }); inPython = true; return; }
+    // `modifier shared`, `statement comment`, ...: the entries a line can point at
+    if ((m = ENTRY_LINE.exec(line))) { entries.push({ kind: m[1], name: m[2], file, line: number }); return; }
     if ((m = /^argument\s+is\s+(.+?)\s*$/.exec(line))) { argumentName = m[1]; return; }
     if ((m = /^comment\s+is\s+(.+?)\s*$/.exec(line))) { comment = m[1]; return; }
-    if ((m = /^def\s+(.+)$/.exec(line))) {
-      let rest = m[1];
-      const flags = new Set();
-      let f;
-      let language = null;
-      for (;;) {
-        if ((f = FLAG.exec(rest))) flags.add(f[1].split(/\s+/).join(' '));
-        else if (!language && (f = /^(\w+)\s+/.exec(rest)) && languages.has(f[1])) { language = f[1]; flags.add(language); }
-        else break;
-        rest = rest.slice(f[0].length);
-      }
+    if (parsed) {
+      const { language, flags, pattern: rest } = parsed;
       // a body in another language (Python, HTML, ...): no def-lang phrases or variables in it
-      inPython = language !== null;
+      inPython = language !== 'def';
       if (group === null) { group = number; sequence.push(['def', group]); }
       if (language === 'html') inHtml = group;
       const texts = flags.has('regex') ? rest.split(' or ') : [rest];
@@ -161,7 +217,7 @@ function indexText(file, text, languages = languageNames([text])) {
       if (pattern) defs.push({ file, line: number, text: line.trim(), pattern: m[1].trim(), alias: true, ...pattern });
     }
   });
-  return { file, defs, lines, pythonLines, htmlLines, languageLines, commentLines, sequence };
+  return { file, defs, entries, lines, pythonLines, htmlLines, languageLines, commentLines, sequence, entryBodies };
 }
 
 // Every match of a def on a line, with greedy and with lazy arguments.
@@ -422,6 +478,20 @@ function variablesIn(line, names, phrases) {
   return found;
 }
 
+// Where an entry (`modifier shared`, `statement comment`, ...) is declared. Its
+// help and declaration are what a use of that word points at.
+function findEntry(name, currentFile, indexes) {
+  if (!/^\w+$/.test(name)) return [];
+  const home = packageFolder(currentFile);
+  const rank = index => index.file === currentFile ? 0 : home && index.file.startsWith(home + path.sep) ? 1 : 2;
+  const ordered = [...indexes].sort((a, b) => rank(a) - rank(b));
+  const found = [];
+  for (const index of ordered) for (const entry of index.entries || []) {
+    if (entry.name === name) found.push({ ...entry });
+  }
+  return found;
+}
+
 // Where a variable first gets a value: `x is ...`, `give x`, `for each x in`, `add ... to x`.
 function findVariable(word, currentFile, indexes) {
   if (!/^[\p{L}\p{N}_]+$/u.test(word)) return null;
@@ -671,11 +741,18 @@ function findLinks(line, fromFile) {
 
 const MEANS_LINE = /^(?!(?:def|use|comment|argument|error)\s)\S.*\s+means\s+/;
 
+// A def line is one the reader made into a definition: `def X`, but also
+// `python[written] X`, `html X`, and the other ways a language is written.
+function isDefLine(index, n) {
+  return n >= 0 && n < index.lines.length &&
+    (/^def\s/.test(index.lines[n]) || index.defs.some(d => d.line === n && !d.alias));
+}
+
 // The description of the definition on `line`: the comment lines right above it
 // (above the first line of a def group, or of a run of `means` lines).
 function descriptionOf(index, line) {
   const lines = index.lines;
-  const same = /^def\s/.test(lines[line]) ? (n => /^def\s/.test(lines[n] || '')) : (n => MEANS_LINE.test(lines[n] || ''));
+  const same = isDefLine(index, line) ? (n => isDefLine(index, n)) : (n => MEANS_LINE.test(lines[n] || ''));
   let start = line;
   while (start > 0 && same(start - 1)) start--;
   const comment = n => {
@@ -710,7 +787,7 @@ function splitDescription(description) {
 // (every way to write it), or the `means` line. The body is a Ctrl+click away.
 function headerOf(index, line) {
   const lines = index.lines;
-  const isDef = n => n >= 0 && n < lines.length && /^def\s/.test(lines[n]);
+  const isDef = n => isDefLine(index, n);
   if (!isDef(line)) return lines[line];
   let start = line;
   while (isDef(start - 1)) start--;
@@ -723,7 +800,7 @@ function headerOf(index, line) {
 // (for a `means` line, just that line). Long bodies are cut after `limit` lines.
 function sourceOf(index, line, limit = 15) {
   const lines = index.lines;
-  const isDef = n => n >= 0 && n < lines.length && /^def\s/.test(lines[n]);
+  const isDef = n => isDefLine(index, n);
   if (!isDef(line)) return lines[line];
   let start = line;
   while (isDef(start - 1)) start--;
@@ -762,6 +839,59 @@ const FLAG_HELP = {
     '`"yes" if 1 < 2 otherwise nope` (only one side runs), `api "/x" runs ...` (runs on each request).',
   'regex': '**regex**: the pattern is a regular expression; alternatives are split by ` or `.',
 };
+
+// The words that are the language's own keys, not library phrases. Hover shows what
+// they do; cycles and phases are meaningful only inside a `hook` field.
+const KEY_HELP = {
+  'language': '**language**: declares how a body written in this language runs. Its `does` is the code that turns a definition\'s body into its value.',
+  'flag': '**flag**: a word in brackets on a def or `does` line, like `def[written]`. Its `does` acts on the definition as it is made.',
+  'modifier': '**modifier**: a word in front of a line. Its hooks act on that one line, so declaring it never installs behavior by itself.',
+  'statement': '**statement**: a word that starts a line, like `comment is //`. Its `words` say how it is written and its `does` runs where it acts.',
+  'does': '**does**: the entry\'s body, in the language written after `in`. It finds what it acts on in `self["entry"]`.',
+  'words': '**words**: the pattern that says how a flag or statement is written. Its `A0`, `A1`, … get the words in those places.',
+  'hook': '**hook**: declares one phase of a cycle: `hook CYCLE PHASE in LANGUAGE`. Declaring it installs nothing; the entry must be applied to a line.',
+  'editor': '**editor**: tells the editor which language a definition\'s body is written in, for colours and completions.',
+  'reading': '**reading**: a statement whose `does` runs while the file is read, before later lines are read (also in check and compile), because it decides how they are read.',
+  'replaces': '**replaces**: says this entry takes the place of one declared in another file. Without it, two declarations of the same name are an error.',
+  'file': '**file** cycle: reading a used file. `start` runs before its lines, `end` after them, `error` if reading fails.',
+  'line': '**line** cycle: one line being read or run. A modifier in front of the line supplies the hook.',
+  'define': '**define** cycle: making a definition or naming a variable. At `end` the new definition is in `self["cycle"]["definition"]`; on a name line the variable is in `self["cycle"]["variable"]`.',
+  'call': '**call** cycle: calling a definition. `start` runs before its body, `end` after it, `error` if it fails. Its hooks live on the definition.',
+  'body': '**body** cycle: a definition\'s body itself, inside its call. `self["cycle"]["body"]` is the lines about to run.',
+  'scope': '**scope** cycle: a statement\'s lines under it and the rest of its `does`, with the files in `self["cycle"]["scope"]`.',
+  'start': '**start** phase: runs before the operation. Put scratch values in `self["cycle"]["state"][owner]` here; a name hook must register the name now, before the line runs.',
+  'end': '**end** phase: runs after the operation succeeds, with the state from `start`. End and error hooks run in reverse order.',
+  'error': '**error** phase: runs if the operation raises. The exception is in `self["cycle"]["error"]`, then it is re-raised.',
+};
+const HOOK_CYCLES = ['file', 'line', 'define', 'call', 'body', 'scope'];
+const HOOK_PHASES = ['start', 'end', 'error'];
+const HOOK_LINE = new RegExp('^hook\\s+(' + HOOK_CYCLES.join('|') + ')\\s+(' + HOOK_PHASES.join('|') + ')\\s+in\\s+\\w+(\\[[^\\]]*\\])?');
+
+// A language key under the cursor: { key, start, end }, or null. Only where the word
+// is syntax: an entry declaration, one of its fields, or part of a `hook` field.
+function keyAt(line, column) {
+  const word = wordAt(line, column);
+  if (!word) return null;
+  const end = word.start + word.text.length;
+  const text = line.trim();
+  const offset = line.indexOf(text);
+  const hit = (key, start) => ({ key, start, end: start + key.length });
+  const at = span => word.start >= offset + span && end <= offset + span + word.text.length;
+
+  const declaration = /^(language|flag|modifier|statement)\s+\w+$/.exec(text);
+  if (declaration && word.start === offset) return hit(declaration[1], offset);
+
+  const hook = HOOK_LINE.exec(text);
+  if (hook) {
+    if (word.text === 'hook' && at(0)) return hit('hook', offset);
+    if (word.text === hook[1]) return hit(hook[1], offset + text.indexOf(hook[1]));
+    if (word.text === hook[2]) return hit(hook[2], offset + text.indexOf(hook[2], text.indexOf(hook[1]) + hook[1].length));
+    return null;
+  }
+  const field = /^(does|hook|words|editor|reading|replaces)\b/.exec(text);
+  if (field && word.text === field[1] && at(0)) return hit(field[1], offset);
+  return null;
+}
 
 // The flag under the cursor on a def line: { flag, start, end }, or null. `languages`
 // are the language words (python, html, ...), which can stand among the flags.
@@ -839,6 +969,82 @@ const PYTHON_SELF = [
   ['file_path', 'file_path(${1:name})', "A file's path, relative to the program's folder."],
   ['store', 'store(${1:"name"})', "A dict for a library's own state: the same dict every time for the same name."],
 ];
+// The keys a Python body reads with `self["KEY"]` (the kernel's tree).
+const PYTHON_KERNEL = [
+  ['aliases', "Phrases `X means Y` has added, as {phrase: words}."],
+  ['answer', "The last question's answer: True, False, or None."],
+  ['cycle', 'The hook cycle running now: its file, owner, state, and what it acts on.'],
+  ['definitions', 'Every definition the program has made, in the order made.'],
+  ['entry', 'What the entry acts on: its kind, name and fields.'],
+  ['file', 'The file being read or run now.'],
+  ['files', "Each file's comment marker, argument name, indent, variables and shared names."],
+  ['flag', "The kernel's flags, by name."],
+  ['language', "The kernel's languages, by name."],
+  ['mode', "'running', 'checking' or 'reloading'."],
+  ['modifier', "The kernel's modifiers, by name."],
+  ['program', "The program's folder."],
+  ['shared', 'Shared values, keyed by (file, name).'],
+  ['statement', "The kernel's statements, by name."],
+  ['store', "A library's own state, by name: the same dict each time."],
+  ['variables', "This file's variables (or a def's own, while it runs)."],
+];
+const KERNEL_HELP = Object.fromEntries(PYTHON_KERNEL);
+
+// Known values in a hook body, and what their fields are. `DEFINITION` is the
+// definition from `self["cycle"]["definition"]`; its modes are what a compiled
+// build keeps, so a library sets those rather than relying on a local function.
+const PYTHON_OBJECTS = {
+  DEFINITION: [
+    ['visibility', 'visibility', "'everywhere' (the default) or 'file'. A compiled build restores `seen_by` from this, so set it as well as `seen_by`."],
+    ['seen_by', 'seen_by', 'A function `file → bool`: whether a line read from `file` may use this definition. File-only visibility is `lambda file: file == DEFINITION.file`; set `visibility` too for compiled builds.'],
+    ['pattern_mode', 'pattern_mode', "'readable' or 'regex'; a compiled build rebuilds `read_pattern` from this."],
+    ['argument_mode', 'argument_mode', "'values', 'written' or 'kept'; a compiled build rebuilds `read_argument` from this."],
+    ['source', 'source', 'The definition pattern as written, e.g. `A0 is A1`.'],
+    ['language', 'language', "The body's language: `def`, `python`, `html`, ..."],
+    ['file', 'file', 'The `.def` file it was written in, or None for a typed-in definition.'],
+    ['flags', 'flags', 'Flags from the definition line, e.g. `{"written": None}`.'],
+    ['body', 'body', 'The body lines, with arguments replaced by slots.'],
+    ['patterns', 'patterns', 'The compiled regexes for its patterns.'],
+    ['hooks', 'hooks', 'Hooks on this definition: cycle, phase, definition and owner.'],
+    ['in_place', 'in_place', 'True for an entry’s `does`: it runs where the entry acts.'],
+    ['indent', 'indent', 'The indent of the file where it was written, for its body.'],
+    ['comment', 'comment', 'The comment marker of the file where it was written.'],
+    ['python', 'python', 'True when its body language is Python.'],
+    ['reads_values', 'reads_values', 'Whether its arguments are read as expressions, for their values.'],
+    ['read_pattern', 'read_pattern', 'The function that reads a pattern; a compiled build rebuilds it from `pattern_mode`.'],
+    ['read_argument', 'read_argument', 'The function that reads an argument; a compiled build rebuilds it from `argument_mode`.'],
+    ['add_patterns', 'add_patterns(${1:source}, ${2:argument_name})', 'Adds another def line to this definition; stacked lines share one body.'],
+    ['add_line', 'add_line(${1:line})', 'Adds a line to the definition body.'],
+    ['matches', 'matches(${1:text})', 'Matches text against its patterns.'],
+  ],
+};
+
+// The known field under the cursor in `DEFINITION.visibility`, or null.
+function objectFieldAt(line, column) {
+  for (const [name, fields] of Object.entries(PYTHON_OBJECTS)) {
+    const re = new RegExp('\\b' + name + '\\s*\\.\\s*(\\w+)', 'g');
+    for (const m of line.matchAll(re)) {
+      const field = m[1];
+      const start = m.index + m[0].lastIndexOf(field);
+      if (start <= column && column < start + field.length) {
+        return { object: name, field, start, end: start + field.length,
+          documentation: (fields.find(f => f[0] === field) || [])[2] };
+      }
+    }
+  }
+  return null;
+}
+
+// The kernel key under the cursor in `self["KEY"]`, or null.
+function selfKeyAt(line, column) {
+  for (const m of line.matchAll(/\bself\[\s*(?:(['"])(\w+)\1|(\w+))/g)) {
+    const key = m[2] || m[3];
+    const start = m.index + m[0].indexOf(key);
+    if (start <= column && column < start + key.length) return { key, start, end: start + key.length };
+  }
+  return null;
+}
+
 const PYTHON_HELPERS = [
   ['self', 'self', 'The interpreter: self.run, self.say, self.variables, ...'],
   ['number', 'number(${1:value})', 'The value as a number, or an error.'],
@@ -930,8 +1136,9 @@ function importNames(file) {
   return [...names].sort();
 }
 
-// The def whose body holds `line` (Python or def-lang), or null.
+// The def or entry field whose body holds `line` (Python or def-lang), or null.
 function bodyOwner(index, line) {
+  if (index.entryBodies && index.entryBodies.has(line)) return index.entryBodies.get(line);
   let n = line;
   while (n > 0 && (/^\s/.test(index.lines[n]) || !index.lines[n].trim())) n--;
   if (n === line) return null;
@@ -967,7 +1174,7 @@ function completionsAt(index, n, column, indexes, languages = new Set(['python']
   };
   const add = (kind, label, insert, documentation = '', more = {}) => {
     const filter = more.filter || label;
-    const start = kind === 'python' || (kind === 'variable' && index.pythonLines.has(n)) ? before.search(/\w*$/) : startOf(filter);
+    const start = more.start ?? (kind === 'python' || (kind === 'variable' && index.pythonLines.has(n)) ? before.search(/\w*$/) : startOf(filter));
     items.push({ kind, label, insert, filter, start, detail: more.detail || '', documentation, sort: more.sort || '5' });
   };
 
@@ -976,6 +1183,26 @@ function completionsAt(index, n, column, indexes, languages = new Set(['python']
     const owner = bodyOwner(index, n);
     // an HTML, CSS, JavaScript ... body: that language's own editor support, not ours
     if (owner && owner.language !== true && owner.language !== 'python') return [];
+    // fields of a known value in a hook, e.g. `DEFINITION.visibility`
+    const member = /\b(\w+)\s*\.\s*\w*$/.exec(before);
+    const fields = member && PYTHON_OBJECTS[member[1]];
+    if (fields) {
+      const start = before.search(/\w*$/);
+      for (const [label, insert, doc] of fields) add('python', label, insert, doc, { sort: '0', start });
+      return items;
+    }
+    // `self["KEY"]`: the kernel's tree (entry bodies use these more than methods)
+    if (/\bself\[\s*(?:['"]?\w*)$/.test(before)) {
+      const quote = /self\[\s*(['"])/.exec(before)?.[1] || '';
+      const after = line.slice(column);
+      const keyStart = column - (/\w*$/.exec(before)?.[0].length || 0);
+      for (const [label, doc] of PYTHON_KERNEL) {
+        let insert = quote ? label + quote : `"${label}"`;
+        if (!/^\s*(?:['"])?\s*\]/.test(after)) insert += ']';
+        add('python', label, insert, doc, { sort: '0', start: keyStart });
+      }
+      return items;
+    }
     if (/\bself\.\w*$/.test(before)) {
       for (const [label, insert, doc] of PYTHON_SELF) add('python', label, insert, doc);
       return items;
@@ -1154,8 +1381,8 @@ function render(parts, formatted) {
 }
 
 module.exports = {
-  FLAG_HELP, flagAt, flagWarnings, wrapsOnLine,
-  indexText, findDefinitions, findVariable, findLinks, sourceOf, headerOf, descriptionOf, splitDescription, readableToRegex,
+  FLAG_HELP, flagAt, KEY_HELP, keyAt, KERNEL_HELP, selfKeyAt, PYTHON_OBJECTS, objectFieldAt, flagWarnings, wrapsOnLine,
+  indexText, findDefinitions, findEntry, findVariable, findLinks, sourceOf, headerOf, descriptionOf, splitDescription, readableToRegex,
   packageFolder, programFolder, libraryFolder, linkedFolders, listedLibraries, globalFolder, resolveImport, visibleIndexes, templateExpressionAt, wordAt, phrasesIn, defOrder, orderStarts, structureAt,
   completionsAt, defSnippet, patternParts, importNames, formatText, formatTextWith, bodyLanguageAt,
   variableNames, variablesIn, languageNames, findLanguage, isComment, apiRoutes, viewPaths, htmlReferenceAt, resolveHtmlReference,

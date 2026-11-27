@@ -7,6 +7,39 @@
       "include": "#language-line"
     },
     {
+      "include": "#hook-python-line"
+    },
+    {
+      "include": "#hook-html-line"
+    },
+    {
+      "include": "#hook-css-line"
+    },
+    {
+      "include": "#hook-javascript-line"
+    },
+    {
+      "include": "#hook-js-line"
+    },
+    {
+      "include": "#hook-sql-line"
+    },
+    {
+      "include": "#hook-markdown-line"
+    },
+    {
+      "include": "#hook-json-line"
+    },
+    {
+      "include": "#hook-shell-line"
+    },
+    {
+      "include": "#hook-bash-line"
+    },
+    {
+      "include": "#hook-yaml-line"
+    },
+    {
       "include": "#python-def"
     },
     {
@@ -487,6 +520,447 @@
         }
       },
       "end": "^(?=\\S)",
+      "patterns": [
+        {
+          "name": "meta.embedded.block.yaml",
+          "begin": "^(?=[ \\t])",
+          "end": "^(?=\\S)",
+          "patterns": [
+            {
+              "include": "source.yaml"
+            }
+          ]
+        }
+      ]
+    },
+    "hook-python-line": {
+      "name": "meta.hook.python.def",
+      "begin": "^(\\s*)(hook)\\s+((?:file|line|define|call|body|scope))\\s+((?:start|end|error))\\s+in\\s+(python)(\\[[^\\]]*\\])?\\s*$",
+      "beginCaptures": {
+        "2": {
+          "name": "storage.type.def.def"
+        },
+        "3": {
+          "name": "keyword.control.def"
+        },
+        "4": {
+          "name": "keyword.control.def"
+        },
+        "5": {
+          "name": "storage.modifier.def"
+        },
+        "6": {
+          "patterns": [
+            {
+              "include": "#flags"
+            }
+          ]
+        }
+      },
+      "end": "^(?=\\1\\S|\\S)",
+      "patterns": [
+        {
+          "name": "meta.embedded.block.python",
+          "begin": "^(?=[ \\t])",
+          "end": "^(?=\\S)",
+          "patterns": [
+            {
+              "include": "source.python"
+            }
+          ]
+        }
+      ]
+    },
+    "hook-html-line": {
+      "name": "meta.hook.html.def",
+      "begin": "^(\\s*)(hook)\\s+((?:file|line|define|call|body|scope))\\s+((?:start|end|error))\\s+in\\s+(html)(\\[[^\\]]*\\])?\\s*$",
+      "beginCaptures": {
+        "2": {
+          "name": "storage.type.def.def"
+        },
+        "3": {
+          "name": "keyword.control.def"
+        },
+        "4": {
+          "name": "keyword.control.def"
+        },
+        "5": {
+          "name": "storage.modifier.def"
+        },
+        "6": {
+          "patterns": [
+            {
+              "include": "#flags"
+            }
+          ]
+        }
+      },
+      "end": "^(?=\\1\\S|\\S)",
+      "patterns": [
+        {
+          "name": "meta.embedded.block.html",
+          "begin": "^(?=[ \\t])",
+          "end": "^(?=\\S)",
+          "patterns": [
+            {
+              "name": "meta.tag.view.html",
+              "begin": "(</?)(view)\\b",
+              "beginCaptures": {
+                "1": {
+                  "name": "punctuation.definition.tag.begin.html"
+                },
+                "2": {
+                  "name": "entity.name.tag.html"
+                }
+              },
+              "end": "(/?>)",
+              "endCaptures": {
+                "1": {
+                  "name": "punctuation.definition.tag.end.html"
+                }
+              },
+              "patterns": [
+                {
+                  "include": "text.html.basic#attribute"
+                }
+              ]
+            },
+            {
+              "include": "text.html.basic"
+            }
+          ]
+        }
+      ]
+    },
+    "hook-css-line": {
+      "name": "meta.hook.css.def",
+      "begin": "^(\\s*)(hook)\\s+((?:file|line|define|call|body|scope))\\s+((?:start|end|error))\\s+in\\s+(css)(\\[[^\\]]*\\])?\\s*$",
+      "beginCaptures": {
+        "2": {
+          "name": "storage.type.def.def"
+        },
+        "3": {
+          "name": "keyword.control.def"
+        },
+        "4": {
+          "name": "keyword.control.def"
+        },
+        "5": {
+          "name": "storage.modifier.def"
+        },
+        "6": {
+          "patterns": [
+            {
+              "include": "#flags"
+            }
+          ]
+        }
+      },
+      "end": "^(?=\\1\\S|\\S)",
+      "patterns": [
+        {
+          "name": "meta.embedded.block.css",
+          "begin": "^(?=[ \\t])",
+          "end": "^(?=\\S)",
+          "patterns": [
+            {
+              "include": "source.css"
+            }
+          ]
+        }
+      ]
+    },
+    "hook-javascript-line": {
+      "name": "meta.hook.javascript.def",
+      "begin": "^(\\s*)(hook)\\s+((?:file|line|define|call|body|scope))\\s+((?:start|end|error))\\s+in\\s+(javascript)(\\[[^\\]]*\\])?\\s*$",
+      "beginCaptures": {
+        "2": {
+          "name": "storage.type.def.def"
+        },
+        "3": {
+          "name": "keyword.control.def"
+        },
+        "4": {
+          "name": "keyword.control.def"
+        },
+        "5": {
+          "name": "storage.modifier.def"
+        },
+        "6": {
+          "patterns": [
+            {
+              "include": "#flags"
+            }
+          ]
+        }
+      },
+      "end": "^(?=\\1\\S|\\S)",
+      "patterns": [
+        {
+          "name": "meta.embedded.block.javascript",
+          "begin": "^(?=[ \\t])",
+          "end": "^(?=\\S)",
+          "patterns": [
+            {
+              "include": "source.js"
+            }
+          ]
+        }
+      ]
+    },
+    "hook-js-line": {
+      "name": "meta.hook.js.def",
+      "begin": "^(\\s*)(hook)\\s+((?:file|line|define|call|body|scope))\\s+((?:start|end|error))\\s+in\\s+(js)(\\[[^\\]]*\\])?\\s*$",
+      "beginCaptures": {
+        "2": {
+          "name": "storage.type.def.def"
+        },
+        "3": {
+          "name": "keyword.control.def"
+        },
+        "4": {
+          "name": "keyword.control.def"
+        },
+        "5": {
+          "name": "storage.modifier.def"
+        },
+        "6": {
+          "patterns": [
+            {
+              "include": "#flags"
+            }
+          ]
+        }
+      },
+      "end": "^(?=\\1\\S|\\S)",
+      "patterns": [
+        {
+          "name": "meta.embedded.block.js",
+          "begin": "^(?=[ \\t])",
+          "end": "^(?=\\S)",
+          "patterns": [
+            {
+              "include": "source.js"
+            }
+          ]
+        }
+      ]
+    },
+    "hook-sql-line": {
+      "name": "meta.hook.sql.def",
+      "begin": "^(\\s*)(hook)\\s+((?:file|line|define|call|body|scope))\\s+((?:start|end|error))\\s+in\\s+(sql)(\\[[^\\]]*\\])?\\s*$",
+      "beginCaptures": {
+        "2": {
+          "name": "storage.type.def.def"
+        },
+        "3": {
+          "name": "keyword.control.def"
+        },
+        "4": {
+          "name": "keyword.control.def"
+        },
+        "5": {
+          "name": "storage.modifier.def"
+        },
+        "6": {
+          "patterns": [
+            {
+              "include": "#flags"
+            }
+          ]
+        }
+      },
+      "end": "^(?=\\1\\S|\\S)",
+      "patterns": [
+        {
+          "name": "meta.embedded.block.sql",
+          "begin": "^(?=[ \\t])",
+          "end": "^(?=\\S)",
+          "patterns": [
+            {
+              "include": "source.sql"
+            }
+          ]
+        }
+      ]
+    },
+    "hook-markdown-line": {
+      "name": "meta.hook.markdown.def",
+      "begin": "^(\\s*)(hook)\\s+((?:file|line|define|call|body|scope))\\s+((?:start|end|error))\\s+in\\s+(markdown)(\\[[^\\]]*\\])?\\s*$",
+      "beginCaptures": {
+        "2": {
+          "name": "storage.type.def.def"
+        },
+        "3": {
+          "name": "keyword.control.def"
+        },
+        "4": {
+          "name": "keyword.control.def"
+        },
+        "5": {
+          "name": "storage.modifier.def"
+        },
+        "6": {
+          "patterns": [
+            {
+              "include": "#flags"
+            }
+          ]
+        }
+      },
+      "end": "^(?=\\1\\S|\\S)",
+      "patterns": [
+        {
+          "name": "meta.embedded.block.markdown",
+          "begin": "^(?=[ \\t])",
+          "end": "^(?=\\S)",
+          "patterns": [
+            {
+              "include": "text.html.markdown"
+            }
+          ]
+        }
+      ]
+    },
+    "hook-json-line": {
+      "name": "meta.hook.json.def",
+      "begin": "^(\\s*)(hook)\\s+((?:file|line|define|call|body|scope))\\s+((?:start|end|error))\\s+in\\s+(json)(\\[[^\\]]*\\])?\\s*$",
+      "beginCaptures": {
+        "2": {
+          "name": "storage.type.def.def"
+        },
+        "3": {
+          "name": "keyword.control.def"
+        },
+        "4": {
+          "name": "keyword.control.def"
+        },
+        "5": {
+          "name": "storage.modifier.def"
+        },
+        "6": {
+          "patterns": [
+            {
+              "include": "#flags"
+            }
+          ]
+        }
+      },
+      "end": "^(?=\\1\\S|\\S)",
+      "patterns": [
+        {
+          "name": "meta.embedded.block.json",
+          "begin": "^(?=[ \\t])",
+          "end": "^(?=\\S)",
+          "patterns": [
+            {
+              "include": "source.json"
+            }
+          ]
+        }
+      ]
+    },
+    "hook-shell-line": {
+      "name": "meta.hook.shell.def",
+      "begin": "^(\\s*)(hook)\\s+((?:file|line|define|call|body|scope))\\s+((?:start|end|error))\\s+in\\s+(shell)(\\[[^\\]]*\\])?\\s*$",
+      "beginCaptures": {
+        "2": {
+          "name": "storage.type.def.def"
+        },
+        "3": {
+          "name": "keyword.control.def"
+        },
+        "4": {
+          "name": "keyword.control.def"
+        },
+        "5": {
+          "name": "storage.modifier.def"
+        },
+        "6": {
+          "patterns": [
+            {
+              "include": "#flags"
+            }
+          ]
+        }
+      },
+      "end": "^(?=\\1\\S|\\S)",
+      "patterns": [
+        {
+          "name": "meta.embedded.block.shell",
+          "begin": "^(?=[ \\t])",
+          "end": "^(?=\\S)",
+          "patterns": [
+            {
+              "include": "source.shell"
+            }
+          ]
+        }
+      ]
+    },
+    "hook-bash-line": {
+      "name": "meta.hook.bash.def",
+      "begin": "^(\\s*)(hook)\\s+((?:file|line|define|call|body|scope))\\s+((?:start|end|error))\\s+in\\s+(bash)(\\[[^\\]]*\\])?\\s*$",
+      "beginCaptures": {
+        "2": {
+          "name": "storage.type.def.def"
+        },
+        "3": {
+          "name": "keyword.control.def"
+        },
+        "4": {
+          "name": "keyword.control.def"
+        },
+        "5": {
+          "name": "storage.modifier.def"
+        },
+        "6": {
+          "patterns": [
+            {
+              "include": "#flags"
+            }
+          ]
+        }
+      },
+      "end": "^(?=\\1\\S|\\S)",
+      "patterns": [
+        {
+          "name": "meta.embedded.block.bash",
+          "begin": "^(?=[ \\t])",
+          "end": "^(?=\\S)",
+          "patterns": [
+            {
+              "include": "source.shell"
+            }
+          ]
+        }
+      ]
+    },
+    "hook-yaml-line": {
+      "name": "meta.hook.yaml.def",
+      "begin": "^(\\s*)(hook)\\s+((?:file|line|define|call|body|scope))\\s+((?:start|end|error))\\s+in\\s+(yaml)(\\[[^\\]]*\\])?\\s*$",
+      "beginCaptures": {
+        "2": {
+          "name": "storage.type.def.def"
+        },
+        "3": {
+          "name": "keyword.control.def"
+        },
+        "4": {
+          "name": "keyword.control.def"
+        },
+        "5": {
+          "name": "storage.modifier.def"
+        },
+        "6": {
+          "patterns": [
+            {
+              "include": "#flags"
+            }
+          ]
+        }
+      },
+      "end": "^(?=\\1\\S|\\S)",
       "patterns": [
         {
           "name": "meta.embedded.block.yaml",
